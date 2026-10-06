@@ -97,6 +97,31 @@ type MarketResponse = {
   error?: string;
 };
 
+type DashboardSignal = {
+  symbol: string;
+  baseAsset: string;
+  direction: "LONG" | "SHORT" | "NEUTRAL";
+  score: number;
+  status: string;
+  price: number;
+  priceChange24h: number;
+  volumeSpike: number;
+  rsi: number | null;
+  capturedAt?: string;
+};
+
+type DashboardVolume = {
+  symbol: string;
+  price: number;
+  change24h: number;
+  volume: number;
+  averageVolume: number;
+  spike: number;
+  rsi: number | null;
+  level: string;
+  reason: string;
+};
+
 function formatPrice(value: number) {
   if (!Number.isFinite(value)) return "—";
 
@@ -149,44 +174,91 @@ function marketTone(change: number) {
   return "neutral";
 }
 
-function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:string)=>void}) {
+function levelTone(level: string) {
+  const normalized = level.toLowerCase();
+  if (normalized.includes("extreme")) return "danger";
+  if (normalized.includes("high")) return "warning";
+  if (normalized.includes("moderate")) return "up";
+  return "muted";
+}
+
+function Dashboard({
+  go,
+  onCoinClick,
+}: {
+  go: (t: Tab) => void;
+  onCoinClick: (symbol: string) => void;
+}) {
   const [market, setMarket] = useState<MarketResponse | null>(null);
+  const [liveSignals, setLiveSignals] = useState<DashboardSignal[]>([]);
+  const [volumeRows, setVolumeRows] = useState<DashboardVolume[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState("");
-  const [liveSignals, setLiveSignals] = useState<any[]>([]);
+  const [error, setError] = useState("");
 
   async function loadDashboardData(isManual = false) {
     if (isManual) setRefreshing(true);
+    setError("");
 
     try {
-      const [marketResponse, signalResponse] = await Promise.all([
-        fetch("/api/market", { cache: "no-store" }),
+      const [marketResponse, signalResponse, volumeResponse] = await Promise.all([
+        fetch(`/api/market?ts=${Date.now()}`, { cache: "no-store" }),
         fetch(`/api/signals?ts=${Date.now()}`, { cache: "no-store" }),
+        fetch(`/api/volume-spike?interval=1h&ts=${Date.now()}`, {
+          cache: "no-store",
+        }),
       ]);
 
-      const marketData = (await marketResponse.json()) as MarketResponse;
-      const signalData = await signalResponse.json();
+      const [marketData, signalData, volumeData] = await Promise.all([
+        marketResponse.json() as Promise<MarketResponse>,
+        signalResponse.json(),
+        volumeResponse.json(),
+      ]);
 
       if (!marketResponse.ok || !marketData.ok) {
         throw new Error(marketData.error || "Market data unavailable");
       }
 
       setMarket(marketData);
-      setLiveSignals(signalData?.ok ? (signalData.rows ?? []) : []);
+      setLiveSignals(
+        signalResponse.ok && signalData?.ok && Array.isArray(signalData.rows)
+          ? signalData.rows
+          : [],
+      );
+      setVolumeRows(
+        volumeResponse.ok && volumeData?.ok && Array.isArray(volumeData.rows)
+          ? volumeData.rows
+          : [],
+      );
+
+      const updateSource =
+        marketData.updatedAt || signalData?.updatedAt || volumeData?.updatedAt;
 
       setLastUpdated(
-        marketData.updatedAt
-          ? new Date(marketData.updatedAt).toLocaleTimeString([], {
+        updateSource
+          ? new Date(updateSource).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
               second: "2-digit",
             })
-          : ""
+          : "",
       );
-    } catch {
+
+      if (!signalResponse.ok || !signalData?.ok) {
+        setError("Signal data temporarily unavailable.");
+      } else if (!volumeResponse.ok || !volumeData?.ok) {
+        setError("Volume data temporarily unavailable.");
+      }
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Live dashboard data unavailable",
+      );
       setMarket(null);
       setLiveSignals([]);
+      setVolumeRows([]);
       setLastUpdated("");
     } finally {
       setLoading(false);
@@ -205,7 +277,29 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
   }, []);
 
   const btc = market?.btc ?? null;
-  const movers = market?.markets?.slice(0, 5) ?? [];
+
+  const movers = [...volumeRows]
+    .sort((a, b) => {
+      if (b.spike !== a.spike) return b.spike - a.spike;
+      return Math.abs(b.change24h) - Math.abs(a.change24h);
+    })
+    .slice(0, 5);
+
+  const strongestSignals = [...liveSignals]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 4);
+
+  const signalCounts = {
+    strong: liveSignals.filter((signal) => signal.score >= 110 && signal.score <= 120).length,
+    valid: liveSignals.filter((signal) => signal.score >= 100 && signal.score < 110).length,
+    observe: liveSignals.filter((signal) => signal.score >= 80 && signal.score < 100).length,
+  };
+
+  const topVolume = movers[0] ?? null;
+  const averageSpike =
+    movers.length > 0
+      ? movers.reduce((sum, item) => sum + item.spike, 0) / movers.length
+      : 0;
 
   const marketStatus =
     btc == null
@@ -218,7 +312,7 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
 
   const marketStatusText =
     btc == null
-      ? "Waiting for market data"
+      ? "Waiting for live data"
       : `BTC 24H ${formatPct(btc.change24h)}`;
 
   return (
@@ -238,13 +332,23 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
           onClick={() => loadDashboardData(true)}
           disabled={refreshing}
         >
-          <RefreshCw
-            size={15}
-            className={refreshing ? "spin" : ""}
-          />
+          <RefreshCw size={15} className={refreshing ? "spin" : ""} />
           {refreshing ? "Refreshing" : "Refresh"}
         </button>
       </div>
+
+      {error && (
+        <div
+          className="glass-card"
+          style={{
+            marginBottom: "14px",
+            padding: "12px 14px",
+            fontSize: "12px",
+          }}
+        >
+          <span className="muted">LIVE STATUS: {error}</span>
+        </div>
+      )}
 
       <div className="stats-grid">
         <Card
@@ -252,68 +356,56 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
           style={{ cursor: "pointer" }}
         >
           <span className="label">BTC</span>
-
           <strong className="price">
-            {loading || !btc
-              ? "—"
-              : `$${formatPrice(btc.price)}`}
+            {loading || !btc ? "—" : `$${formatPrice(btc.price)}`}
           </strong>
-
           <span
             className={
-              btc && marketTone(btc.change24h) === "up"
-                ? "up"
-                : btc && marketTone(btc.change24h) === "down"
-                  ? "muted"
-                  : "muted"
+              btc && marketTone(btc.change24h) === "up" ? "up" : "muted"
             }
           >
             {loading || !btc ? "Loading..." : formatPct(btc.change24h)}
           </span>
-
           {btc && (
             <div className="mini-line" />
+          )}
+          {btc && (
+            <div className="muted" style={{ marginTop: "8px", fontSize: "10px" }}>
+              H {formatPrice(btc.high24h)} · L {formatPrice(btc.low24h)}
+            </div>
           )}
         </Card>
 
         <Card>
           <span className="label">MARKET STATUS</span>
-
           <strong>{marketStatus}</strong>
-
-          <span className="muted">
-            {marketStatusText}
-          </span>
-
+          <span className="muted">{marketStatusText}</span>
           <div className="status-dot" />
         </Card>
 
-        <Card>
-          <span className="label">ACTIVE SIGNALS</span>
-
-          <strong>{liveSignals.length}</strong>
-
+        <Card onClick={() => go("Signal")} style={{ cursor: "pointer" }}>
+          <span className="label">LIVE SIGNALS</span>
+          <strong>{loading ? "—" : liveSignals.length}</strong>
           <span className="muted">
-            Live qualifying signals
+            {signalCounts.strong} Strong · {signalCounts.valid} Valid · {signalCounts.observe} Observe
           </span>
         </Card>
 
-        <Card>
-          <span className="label">TOP VOLUME</span>
-
+        <Card onClick={() => go("Volume Spike")} style={{ cursor: "pointer" }}>
+          <span className="label">VOLUME SUMMARY</span>
           <strong>
-            {loading || !movers[0]
-              ? "—"
-              : formatCompactUsd(
-                  movers[0].quoteVolume24h
-                )}
+            {loading || !topVolume ? "—" : `${topVolume.spike.toFixed(1)}x`}
           </strong>
-
           <span className="muted">
-            {movers[0]
-              ? `${movers[0].symbol.replace("USDT", "")} 24H quote volume`
-              : "Waiting for market data"}
+            {topVolume
+              ? `${topVolume.symbol.replace("USDT", "")} · ${topVolume.level}`
+              : "Waiting for volume scan"}
           </span>
+          {topVolume && (
+            <div className="muted" style={{ marginTop: "8px", fontSize: "10px" }}>
+              Avg top-5 spike {averageSpike.toFixed(1)}x
+            </div>
+          )}
         </Card>
       </div>
 
@@ -321,30 +413,23 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
         <Card>
           <div className="card-head">
             <div>
-              <span className="label">MARKET MOVERS</span>
-              <h2>Highest activity</h2>
+              <span className="label">LIVE MARKET MOVERS</span>
+              <h2>Volume activity</h2>
             </div>
-
-            <button
-              className="text-btn"
-              onClick={() => go("Volume Spike")}
-            >
-              View all
-              <ChevronRight size={14} />
+            <button className="text-btn" onClick={() => go("Volume Spike")}>
+              View all <ChevronRight size={14} />
             </button>
           </div>
 
           {loading && (
             <div className="row">
-              <span className="muted">Loading live markets...</span>
+              <span className="muted">Loading live volume scan...</span>
             </div>
           )}
 
           {!loading && movers.length === 0 && (
             <div className="row">
-              <span className="muted">
-                Market data is temporarily unavailable.
-              </span>
+              <span className="muted">No live volume movers right now.</span>
             </div>
           )}
 
@@ -352,11 +437,7 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
             movers.map((item) => {
               const symbol = item.symbol.replace("USDT", "");
               const changeClass =
-                marketTone(item.change24h) === "up"
-                  ? "up"
-                  : marketTone(item.change24h) === "down"
-                    ? "muted"
-                    : "muted";
+                marketTone(item.change24h) === "up" ? "up" : "muted";
 
               return (
                 <div
@@ -368,17 +449,11 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
                   <div>
                     <b>{symbol}</b>
                     <span className="muted">
-                      ${formatPrice(item.price)}
+                      ${formatPrice(item.price)} · {item.level}
                     </span>
                   </div>
-
-                  <span className={changeClass}>
-                    {formatPct(item.change24h)}
-                  </span>
-
-                  <span className="mono">
-                    {formatCompactUsd(item.quoteVolume24h)}
-                  </span>
+                  <span className={changeClass}>{formatPct(item.change24h)}</span>
+                  <span className="mono">{item.spike.toFixed(1)}x</span>
                 </div>
               );
             })}
@@ -388,26 +463,27 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
           <div className="card-head">
             <div>
               <span className="label">LIVE SIGNAL SUMMARY</span>
-              <h2>Latest scanner</h2>
+              <h2>Highest confluence</h2>
             </div>
-
-            <button
-              className="text-btn"
-              onClick={() => go("Signal")}
-            >
-              Open
-              <ChevronRight size={14} />
+            <button className="text-btn" onClick={() => go("Signal")}>
+              Open <ChevronRight size={14} />
             </button>
           </div>
 
-          {liveSignals.length === 0 ? (
+          {loading && (
             <div className="row">
-              <span className="muted">
-                No qualifying live signals right now.
-              </span>
+              <span className="muted">Loading live signals...</span>
             </div>
-          ) : (
-            liveSignals.slice(0, 4).map((signal) => (
+          )}
+
+          {!loading && strongestSignals.length === 0 && (
+            <div className="row">
+              <span className="muted">No qualifying live signals right now.</span>
+            </div>
+          )}
+
+          {!loading &&
+            strongestSignals.map((signal) => (
               <div
                 className="signal-row"
                 key={signal.symbol}
@@ -417,27 +493,88 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
                 <div
                   className={
                     "badge " +
-                    (signal.direction === "LONG" ? "long" : "short")
+                    (signal.direction === "LONG"
+                      ? "long"
+                      : signal.direction === "SHORT"
+                        ? "short"
+                        : "")
                   }
                 >
                   {signal.direction}
                 </div>
 
                 <div>
-                  <b>{signal.symbol}</b>
+                  <b>{signal.baseAsset || signal.symbol.replace("USDT", "")}</b>
                   <span className="muted">
-                    {signal.status}
+                    {signal.status} · {signal.volumeSpike.toFixed(1)}x vol
                   </span>
                 </div>
 
-                <strong className="mono">
-                  {signal.score}/150
-                </strong>
+                <strong className="mono">{signal.score}/150</strong>
               </div>
-            ))
-          )}
+            ))}
         </Card>
       </div>
+
+      <Card style={{ marginTop: "14px" }}>
+        <div className="card-head">
+          <div>
+            <span className="label">VOLUME SNAPSHOT</span>
+            <h2>Why the market is moving</h2>
+          </div>
+          <button className="text-btn" onClick={() => go("Volume Spike")}>
+            Volume Spike <ChevronRight size={14} />
+          </button>
+        </div>
+
+        {loading || !topVolume ? (
+          <div className="row">
+            <span className="muted">Waiting for the live volume engine...</span>
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: "14px",
+              alignItems: "center",
+            }}
+          >
+            <div>
+              <span className="label">TOP VOLUME COIN</span>
+              <strong style={{ display: "block", marginTop: "5px", fontSize: "20px" }}>
+                {topVolume.symbol.replace("USDT", "/USDT")}
+              </strong>
+              <span className="muted" style={{ display: "block", marginTop: "5px" }}>
+                {topVolume.reason}
+              </span>
+            </div>
+
+            <div>
+              <span className="label">SPIKE</span>
+              <strong className="mono" style={{ display: "block", marginTop: "5px" }}>
+                {topVolume.spike.toFixed(2)}x
+              </strong>
+              <span className={levelTone(topVolume.level)} style={{ display: "block", marginTop: "5px", fontSize: "11px" }}>
+                {topVolume.level}
+              </span>
+            </div>
+
+            <div>
+              <span className="label">24H CHANGE</span>
+              <strong
+                className={marketTone(topVolume.change24h) === "up" ? "up" : "muted"}
+                style={{ display: "block", marginTop: "5px" }}
+              >
+                {formatPct(topVolume.change24h)}
+              </strong>
+              <span className="muted" style={{ display: "block", marginTop: "5px" }}>
+                RSI {topVolume.rsi === null ? "—" : topVolume.rsi.toFixed(1)}
+              </span>
+            </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
