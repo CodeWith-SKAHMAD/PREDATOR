@@ -23,22 +23,36 @@ function isSafeSymbol(symbol: string) {
   return /^[A-Z0-9]{4,20}$/.test(symbol);
 }
 
-async function fetchJson<T>(path: string) {
-  let lastError = "Chart data request failed";
+async function fetchJson<T>(path: string): Promise<T> {
+  let lastError =
+    "Chart data request failed";
 
   for (const base of API_BASES) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const controller =
+      new AbortController();
+
+    const timer = setTimeout(
+      () => controller.abort(),
+      7000
+    );
 
     try {
-      const response = await fetch(`${base}${path}`, {
-        cache: "no-store",
-        headers: { Accept: "application/json" },
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        `${base}${path}`,
+        {
+          cache: "no-store",
+          headers: {
+            Accept:
+              "application/json",
+          },
+          signal:
+            controller.signal,
+        }
+      );
 
       if (!response.ok) {
-        lastError = `Request failed: ${response.status}`;
+        lastError =
+          `Request failed: ${response.status}`;
         continue;
       }
 
@@ -56,40 +70,83 @@ async function fetchJson<T>(path: string) {
   throw new Error(lastError);
 }
 
-export async function GET(request: Request) {
+export async function GET(
+  request: Request
+) {
   const url = new URL(request.url);
-  const symbol = (url.searchParams.get("symbol") || "").toUpperCase();
-  const interval = url.searchParams.get("interval") || "15m";
-  const rawLimit = Number(url.searchParams.get("limit") || "500");
+
+  const symbol =
+    (
+      url.searchParams.get(
+        "symbol"
+      ) || ""
+    ).toUpperCase();
+
+  const interval =
+    url.searchParams.get(
+      "interval"
+    ) || "15m";
+
+  const rawLimit =
+    Number(
+      url.searchParams.get(
+        "limit"
+      ) || "500"
+    );
+
   const limit = Math.min(
-    Math.max(Number.isFinite(rawLimit) ? rawLimit : 500, 100),
+    Math.max(
+      Number.isFinite(rawLimit)
+        ? rawLimit
+        : 500,
+      100
+    ),
     1000
   );
 
-  if (!symbol || !isSafeSymbol(symbol)) {
+  if (
+    !symbol ||
+    !isSafeSymbol(symbol)
+  ) {
     return NextResponse.json(
-      { ok: false, error: "Invalid symbol" },
+      {
+        ok: false,
+        error: "Invalid symbol",
+      },
       { status: 400 }
     );
   }
 
-  if (!ALLOWED_INTERVALS.has(interval)) {
+  if (
+    !ALLOWED_INTERVALS.has(
+      interval
+    )
+  ) {
     return NextResponse.json(
-      { ok: false, error: "Invalid timeframe" },
+      {
+        ok: false,
+        error: "Invalid timeframe",
+      },
       { status: 400 }
     );
   }
 
   try {
-    const rows = await fetchJson<number[][]>(
-      `/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`
-    );
+    const rows =
+      await fetchJson<number[][]>(
+        `/api/v3/klines?symbol=${encodeURIComponent(
+          symbol
+        )}&interval=${encodeURIComponent(
+          interval
+        )}&limit=${limit}`
+      );
 
     return NextResponse.json({
       ok: true,
       symbol,
       interval,
-      updatedAt: new Date().toISOString(),
+      updatedAt:
+        new Date().toISOString(),
       rows,
     });
   } catch (error) {
