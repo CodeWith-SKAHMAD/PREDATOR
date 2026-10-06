@@ -119,6 +119,7 @@ type SignalRow = {
   riskLevel: "Low" | "Moderate" | "High" | "Extreme";
   liquidity: number;
   spreadBps: number | null;
+  fundingRate: number | null;
   capturedAt: string;
   expiresAt: string;
   tools: Record<string, ToolResult>;
@@ -617,10 +618,11 @@ export async function GET() {
       return NextResponse.json(scanCache.data);
     }
 
-    const [exchangeInfo, tickers, books] = await Promise.all([
+    const [exchangeInfo, tickers, books, premiums] = await Promise.all([
       fetchJson<{ symbols: SpotSymbol[] }>(SPOT_BASES, "/api/v3/exchangeInfo"),
       fetchJson<Ticker[]>(SPOT_BASES, "/api/v3/ticker/24hr"),
       safeFetch<BookTicker[]>(SPOT_BASES, "/api/v3/ticker/bookTicker"),
+      safeFetch<Array<{ symbol: string; lastFundingRate: string }>>(FUTURES_BASES, "/fapi/v1/premiumIndex"),
     ]);
 
     const tradable = exchangeInfo.symbols
@@ -634,6 +636,11 @@ export async function GET() {
 
     const tickerMap = new Map(tickers.map((item) => [item.symbol, item]));
     const bookMap = new Map((books ?? []).map((item) => [item.symbol, item]));
+    const fundingMap = new Map(
+      (premiums ?? [])
+        .map((item) => [item.symbol, Number(item.lastFundingRate)] as const)
+        .filter(([, value]) => Number.isFinite(value)),
+    );
     const candidates = tradable
       .map((symbol) => {
         const ticker = tickerMap.get(symbol);
@@ -868,6 +875,7 @@ export async function GET() {
             riskLevel: getRisk(atrPercent, status),
             liquidity: candidate.volume24h,
             spreadBps,
+            fundingRate: fundingMap.get(candidate.symbol) ?? null,
             capturedAt: capturedAtForSignal,
             expiresAt: expiresAtForSignal,
             tools,
