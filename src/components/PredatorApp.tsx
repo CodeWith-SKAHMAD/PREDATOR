@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
+
 import {
   BarChart3,
   Bell,
@@ -27,17 +34,40 @@ type Tab =
   | "Calculator"
   | "Settings";
 
-const tabs: {
-  name: Tab;
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
-}[] = [
-  { name: "Dashboard", icon: LayoutDashboard },
-  { name: "Signal", icon: Zap },
-  { name: "Volume Spike", icon: BarChart3 },
-  { name: "BTC Report", icon: Newspaper },
-  { name: "Portfolio", icon: Wallet },
-  { name: "Calculator", icon: CalculatorIcon },
-  { name: "Settings", icon: Settings },
+type IconType = ComponentType<{
+  size?: number;
+  strokeWidth?: number;
+}>;
+
+const tabs: { name: Tab; icon: IconType }[] = [
+  {
+    name: "Dashboard",
+    icon: LayoutDashboard,
+  },
+  {
+    name: "Signal",
+    icon: Zap,
+  },
+  {
+    name: "Volume Spike",
+    icon: BarChart3,
+  },
+  {
+    name: "BTC Report",
+    icon: Newspaper,
+  },
+  {
+    name: "Portfolio",
+    icon: Wallet,
+  },
+  {
+    name: "Calculator",
+    icon: CalculatorIcon,
+  },
+  {
+    name: "Settings",
+    icon: Settings,
+  },
 ];
 
 const signals = [
@@ -67,17 +97,22 @@ function SessionBar() {
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const timer = window.setInterval(() => {
       setNow(new Date());
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => window.clearInterval(timer);
   }, []);
 
   const hour = now.getUTCHours();
 
-  const session =
-    hour < 7 ? "ASIA" : hour < 13 ? "LONDON" : hour < 21 ? "NEW YORK" : "ASIA";
+  let currentSession = "ASIA";
+
+  if (hour >= 7 && hour < 13) {
+    currentSession = "LONDON";
+  } else if (hour >= 13 && hour < 21) {
+    currentSession = "NEW YORK";
+  }
 
   return (
     <div className="sessionbar">
@@ -87,12 +122,15 @@ function SessionBar() {
       </div>
 
       <div className="sessions">
-        {["ASIA", "LONDON", "NEW YORK"].map((item) => (
+        {["ASIA", "LONDON", "NEW YORK"].map((session) => (
           <div
-            key={item}
-            className={"session " + (item === session ? "active" : "")}
+            key={session}
+            className={
+              "session " +
+              (session === currentSession ? "active" : "")
+            }
           >
-            {item}
+            {session}
           </div>
         ))}
       </div>
@@ -112,20 +150,30 @@ function Card({
   children,
   className = "",
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   className?: string;
 }) {
-  return <div className={"glass-card " + className}>{children}</div>;
+  return (
+    <div className={"glass-card " + className}>
+      {children}
+    </div>
+  );
 }
 
-function Dashboard({ go }: { go: (tab: Tab) => void }) {
+function Dashboard({
+  go,
+}: {
+  go: (tab: Tab) => void;
+}) {
   return (
     <div className="page">
       <div className="page-head">
         <div>
           <p className="eyebrow">OVERVIEW</p>
           <h1>Dashboard</h1>
-          <p className="muted">Market intelligence at a glance.</p>
+          <p className="muted">
+            Market intelligence at a glance.
+          </p>
         </div>
 
         <button className="glass-btn">
@@ -183,12 +231,18 @@ function Dashboard({ go }: { go: (tab: Tab) => void }) {
             <div className="row" key={index}>
               <div>
                 <b>{item[0]}</b>
-                <span className="muted">{item[5]} activity</span>
+                <span className="muted">
+                  {item[5]} activity
+                </span>
               </div>
 
-              <span className="up">+{index + 2}.4%</span>
+              <span className="up">
+                +{index + 2}.4%
+              </span>
 
-              <span className="mono">{item[1]}</span>
+              <span className="mono">
+                {item[1]}
+              </span>
             </div>
           ))}
         </Card>
@@ -200,17 +254,26 @@ function Dashboard({ go }: { go: (tab: Tab) => void }) {
               <h2>Latest scanner</h2>
             </div>
 
-            <button className="text-btn" onClick={() => go("Signal")}>
+            <button
+              className="text-btn"
+              onClick={() => go("Signal")}
+            >
               Open
               <ChevronRight size={14} />
             </button>
           </div>
 
           {signals.slice(0, 3).map((signal, index) => (
-            <div className="signal-row" key={index}>
+            <div
+              className="signal-row"
+              key={index}
+            >
               <div
                 className={
-                  "badge " + (signal[1] === "LONG" ? "long" : "short")
+                  "badge " +
+                  (signal[1] === "LONG"
+                    ? "long"
+                    : "short")
                 }
               >
                 {signal[1]}
@@ -218,10 +281,14 @@ function Dashboard({ go }: { go: (tab: Tab) => void }) {
 
               <div>
                 <b>{signal[0]}</b>
-                <span className="muted">{signal[3]}</span>
+                <span className="muted">
+                  {signal[3]}
+                </span>
               </div>
 
-              <strong className="mono">{signal[2]}/150</strong>
+              <strong className="mono">
+                {signal[2]}/150
+              </strong>
             </div>
           ))}
         </Card>
@@ -230,29 +297,46 @@ function Dashboard({ go }: { go: (tab: Tab) => void }) {
   );
 }
 
-function Signals() {
-  const [lastRefresh, setLastRefresh] = useState(new Date());
-  const [seconds, setSeconds] = useState(1800);
+function SignalsPage() {
+  const [lastRefresh, setLastRefresh] =
+    useState(new Date());
+
+  const [seconds, setSeconds] =
+    useState(1800);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setSeconds((value) => (value <= 1 ? 1800 : value - 1));
+    const timer = window.setInterval(() => {
+      setSeconds((value) =>
+        value <= 1 ? 1800 : value - 1
+      );
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => window.clearInterval(timer);
   }, []);
 
-  const forceRefresh = () => {
+  function forceRefresh() {
     setLastRefresh(new Date());
     setSeconds(1800);
-  };
+  }
+
+  const minutes = String(
+    Math.floor(seconds / 60)
+  ).padStart(2, "0");
+
+  const remainingSeconds = String(
+    seconds % 60
+  ).padStart(2, "0");
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">SCALPING SCANNER</p>
+          <p className="eyebrow">
+            SCALPING SCANNER
+          </p>
+
           <h1>Live Signals</h1>
+
           <p className="muted">
             15 tools × 10 points · Score is not an entry.
           </p>
@@ -260,12 +344,13 @@ function Signals() {
 
         <div className="actions">
           <span className="countdown">
-            NEXT SCAN{" "}
-            {String(Math.floor(seconds / 60)).padStart(2, "0")}:
-            {String(seconds % 60).padStart(2, "0")}
+            NEXT SCAN {minutes}:{remainingSeconds}
           </span>
 
-          <button className="glass-btn" onClick={forceRefresh}>
+          <button
+            className="glass-btn"
+            onClick={forceRefresh}
+          >
             <RefreshCw size={15} />
             Force refresh
           </button>
@@ -274,11 +359,17 @@ function Signals() {
 
       <div className="signal-grid">
         {signals.map((signal, index) => (
-          <Card key={index} className="signal-card">
+          <Card
+            key={index}
+            className="signal-card"
+          >
             <div className="signal-top">
               <div
                 className={
-                  "badge " + (signal[1] === "LONG" ? "long" : "short")
+                  "badge " +
+                  (signal[1] === "LONG"
+                    ? "long"
+                    : "short")
                 }
               >
                 {signal[1]}
@@ -292,7 +383,9 @@ function Signals() {
 
             <h2>{signal[0]}</h2>
 
-            <div className="signal-price mono">{signal[4]}</div>
+            <div className="signal-price mono">
+              {signal[4]}
+            </div>
 
             <div className="metrics">
               <span>
@@ -329,22 +422,34 @@ function Signals() {
   );
 }
 
-function VolumeSpike() {
+function VolumeSpikePage() {
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">UNUSUAL ACTIVITY</p>
+          <p className="eyebrow">
+            UNUSUAL ACTIVITY
+          </p>
+
           <h1>Volume Spike</h1>
+
           <p className="muted">
             Activity monitor — not a trade signal.
           </p>
         </div>
 
         <div className="chips">
-          <button className="chip active">1H</button>
-          <button className="chip">4H</button>
-          <button className="chip">1D</button>
+          <button className="chip active">
+            1H
+          </button>
+
+          <button className="chip">
+            4H
+          </button>
+
+          <button className="chip">
+            1D
+          </button>
         </div>
       </div>
 
@@ -370,13 +475,24 @@ function VolumeSpike() {
                     <b>{item[0]}</b>
                   </td>
 
-                  <td className="mono">{item[1]}</td>
-                  <td className="mono">{item[2]}</td>
-                  <td className="mono">{item[3]}</td>
+                  <td className="mono">
+                    {item[1]}
+                  </td>
+
+                  <td className="mono">
+                    {item[2]}
+                  </td>
+
+                  <td className="mono">
+                    {item[3]}
+                  </td>
 
                   <td>
                     <span
-                      className={"level " + item[4].toLowerCase()}
+                      className={
+                        "level " +
+                        item[4].toLowerCase()
+                      }
                     >
                       {item[4]}
                     </span>
@@ -397,13 +513,17 @@ function VolumeSpike() {
   );
 }
 
-function BTCReport() {
+function BTCReportPage() {
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">INTELLIGENCE CENTER</p>
+          <p className="eyebrow">
+            INTELLIGENCE CENTER
+          </p>
+
           <h1>BTC Report</h1>
+
           <p className="muted">
             Market health, structure, cycle and key takeaways.
           </p>
@@ -412,47 +532,81 @@ function BTCReport() {
 
       <div className="stats-grid">
         <Card>
-          <span className="label">MARKET HEALTH</span>
+          <span className="label">
+            MARKET HEALTH
+          </span>
+
           <strong>82 / 100</strong>
-          <span className="up">Healthy</span>
+
+          <span className="up">
+            Healthy
+          </span>
         </Card>
 
         <Card>
-          <span className="label">MARKET CONDITION</span>
+          <span className="label">
+            MARKET CONDITION
+          </span>
+
           <strong>Bullish</strong>
-          <span className="muted">Trend aligned</span>
+
+          <span className="muted">
+            Trend aligned
+          </span>
         </Card>
 
         <Card>
-          <span className="label">CYCLE SCORE</span>
+          <span className="label">
+            CYCLE SCORE
+          </span>
+
           <strong>74</strong>
-          <span className="muted">Expansion</span>
+
+          <span className="muted">
+            Expansion
+          </span>
         </Card>
 
         <Card>
-          <span className="label">CYCLE STAGE</span>
+          <span className="label">
+            CYCLE STAGE
+          </span>
+
           <strong>Markup</strong>
-          <span className="muted">Watch resistance</span>
+
+          <span className="muted">
+            Watch resistance
+          </span>
         </Card>
       </div>
 
       <Card>
         <div className="report-grid">
           <div>
-            <span className="label">SUPPORT</span>
+            <span className="label">
+              SUPPORT
+            </span>
+
             <h2>$118,400</h2>
           </div>
 
           <div>
-            <span className="label">RESISTANCE</span>
+            <span className="label">
+              RESISTANCE
+            </span>
+
             <h2>$124,900</h2>
           </div>
 
           <div>
-            <span className="label">KEY TAKEAWAYS</span>
+            <span className="label">
+              KEY TAKEAWAYS
+            </span>
+
             <p className="muted">
-              Structure remains constructive. Confirm strength with
-              volume and derivatives context before acting.
+              Structure remains constructive.
+              Confirm strength with volume and
+              derivatives context before acting.
             </p>
           </div>
         </div>
@@ -461,43 +615,74 @@ function BTCReport() {
   );
 }
 
-function Portfolio() {
-  const [quantity, setQuantity] = useState(1);
-  const [entryPrice, setEntryPrice] = useState(100);
+function PortfolioPage() {
+  const [quantity, setQuantity] =
+    useState(1);
+
+  const [entryPrice, setEntryPrice] =
+    useState(100);
+
+  const invested =
+    quantity * entryPrice;
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">INVESTMENTS</p>
+          <p className="eyebrow">
+            INVESTMENTS
+          </p>
+
           <h1>Portfolio</h1>
+
           <p className="muted">
             Track holdings, plan and live P&amp;L.
           </p>
         </div>
 
-        <button className="glass-btn">+ Add trade</button>
+        <button className="glass-btn">
+          + Add trade
+        </button>
       </div>
 
       <div className="stats-grid">
         <Card>
-          <span className="label">INVESTED</span>
-          <strong>${(quantity * entryPrice).toFixed(2)}</strong>
+          <span className="label">
+            INVESTED
+          </span>
+
+          <strong>
+            ${invested.toFixed(2)}
+          </strong>
         </Card>
 
         <Card>
-          <span className="label">CURRENT VALUE</span>
+          <span className="label">
+            CURRENT VALUE
+          </span>
+
           <strong>$128.40</strong>
-          <span className="up">+28.40%</span>
+
+          <span className="up">
+            +28.40%
+          </span>
         </Card>
 
         <Card>
-          <span className="label">TOTAL P&amp;L</span>
-          <strong className="up">+$28.40</strong>
+          <span className="label">
+            TOTAL P&amp;L
+          </span>
+
+          <strong className="up">
+            +$28.40
+          </strong>
         </Card>
 
         <Card>
-          <span className="label">COINS</span>
+          <span className="label">
+            COINS
+          </span>
+
           <strong>1</strong>
         </Card>
       </div>
@@ -505,8 +690,13 @@ function Portfolio() {
       <Card>
         <div className="card-head">
           <div>
-            <span className="label">HOLDINGS</span>
-            <h2>Position tracker</h2>
+            <span className="label">
+              HOLDINGS
+            </span>
+
+            <h2>
+              Position tracker
+            </h2>
           </div>
         </div>
 
@@ -522,7 +712,9 @@ function Portfolio() {
               type="number"
               value={quantity}
               onChange={(event) =>
-                setQuantity(Number(event.target.value) || 0)
+                setQuantity(
+                  Number(event.target.value) || 0
+                )
               }
             />
           </label>
@@ -533,14 +725,18 @@ function Portfolio() {
               type="number"
               value={entryPrice}
               onChange={(event) =>
-                setEntryPrice(Number(event.target.value) || 0)
+                setEntryPrice(
+                  Number(event.target.value) || 0
+                )
               }
             />
           </label>
 
           <label>
             Plan
-            <input placeholder="Long-term / scalp" />
+            <input
+              placeholder="Long-term / scalp"
+            />
           </label>
         </div>
       </Card>
@@ -549,17 +745,31 @@ function Portfolio() {
 }
 
 function CalculatorPage() {
-  const [mainData, setMainData] = useState(100);
-  const [percentage, setPercentage] = useState(10);
-  const [fromCurrency, setFromCurrency] = useState("EUR");
-  const [toCurrency, setToCurrency] = useState("USD");
+  const [mainData, setMainData] =
+    useState(100);
+
+  const [percentage, setPercentage] =
+    useState(10);
+
+  const [fromCurrency, setFromCurrency] =
+    useState("EUR");
+
+  const [toCurrency, setToCurrency] =
+    useState("USD");
+
+  const result =
+    (mainData * percentage) / 100;
 
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">TOOLS</p>
+          <p className="eyebrow">
+            TOOLS
+          </p>
+
           <h1>Calculator</h1>
+
           <p className="muted">
             Quick trading and currency utilities.
           </p>
@@ -568,79 +778,122 @@ function CalculatorPage() {
 
       <div className="two-col">
         <Card>
-          <span className="label">PERCENTAGE</span>
-          <h2>Percentage calculator</h2>
+          <span className="label">
+            PERCENTAGE
+          </span>
+
+          <h2>
+            Percentage calculator
+          </h2>
 
           <div className="form-grid">
             <label>
               Main data
+
               <input
                 type="number"
                 value={mainData}
                 onChange={(event) =>
-                  setMainData(Number(event.target.value))
+                  setMainData(
+                    Number(event.target.value) || 0
+                  )
                 }
               />
             </label>
 
             <label>
               % input
+
               <input
                 type="number"
                 value={percentage}
                 onChange={(event) =>
-                  setPercentage(Number(event.target.value))
+                  setPercentage(
+                    Number(event.target.value) || 0
+                  )
                 }
               />
             </label>
           </div>
 
           <div className="result mono">
-            {((mainData * percentage) / 100).toFixed(2)}
+            {result.toFixed(2)}
           </div>
         </Card>
 
         <Card>
-          <span className="label">CURRENCY</span>
-          <h2>Converter</h2>
+          <span className="label">
+            CURRENCY
+          </span>
+
+          <h2>
+            Converter
+          </h2>
 
           <div className="form-grid">
             <label>
               Amount
-              <input defaultValue="100" />
+
+              <input
+                type="number"
+                defaultValue="100"
+              />
             </label>
 
             <label>
               From
+
               <select
                 value={fromCurrency}
                 onChange={(event) =>
-                  setFromCurrency(event.target.value)
+                  setFromCurrency(
+                    event.target.value
+                  )
                 }
               >
-                <option>EUR</option>
-                <option>USD</option>
-                <option>BDT</option>
+                <option value="EUR">
+                  EUR
+                </option>
+
+                <option value="USD">
+                  USD
+                </option>
+
+                <option value="BDT">
+                  BDT
+                </option>
               </select>
             </label>
 
             <label>
               To
+
               <select
                 value={toCurrency}
                 onChange={(event) =>
-                  setToCurrency(event.target.value)
+                  setToCurrency(
+                    event.target.value
+                  )
                 }
               >
-                <option>USD</option>
-                <option>EUR</option>
-                <option>BDT</option>
+                <option value="USD">
+                  USD
+                </option>
+
+                <option value="EUR">
+                  EUR
+                </option>
+
+                <option value="BDT">
+                  BDT
+                </option>
               </select>
             </label>
           </div>
 
           <p className="muted">
-            Live rates will be connected in the data integration phase.
+            Live rates will be connected in the
+            data integration phase.
           </p>
         </Card>
       </div>
@@ -653,8 +906,12 @@ function SettingsPage() {
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">ACCOUNT</p>
+          <p className="eyebrow">
+            ACCOUNT
+          </p>
+
           <h1>Settings</h1>
+
           <p className="muted">
             Profile, preferences and security.
           </p>
@@ -663,8 +920,13 @@ function SettingsPage() {
 
       <div className="two-col">
         <Card>
-          <span className="label">PROFILE</span>
-          <h2>Account details</h2>
+          <span className="label">
+            PROFILE
+          </span>
+
+          <h2>
+            Account details
+          </h2>
 
           <div className="form-grid">
             <label>
@@ -679,37 +941,63 @@ function SettingsPage() {
 
             <label>
               Discord
-              <input placeholder="Connect Discord" />
+              <input
+                placeholder="Connect Discord"
+              />
             </label>
 
             <label>
               Trading experience
+
               <select defaultValue="Beginner">
-                <option>Beginner</option>
-                <option>Intermediate</option>
-                <option>Advanced</option>
+                <option value="Beginner">
+                  Beginner
+                </option>
+
+                <option value="Intermediate">
+                  Intermediate
+                </option>
+
+                <option value="Advanced">
+                  Advanced
+                </option>
               </select>
             </label>
           </div>
 
-          <button className="glass-btn">Save profile</button>
+          <button className="glass-btn">
+            Save profile
+          </button>
         </Card>
 
         <Card>
-          <span className="label">PREFERENCES</span>
-          <h2>Interface</h2>
+          <span className="label">
+            PREFERENCES
+          </span>
+
+          <h2>
+            Interface
+          </h2>
 
           <div className="setting-row">
-            <span>Theme</span>
+            <span>
+              Theme
+            </span>
+
             <ThemeToggle />
           </div>
 
           <div className="setting-row">
-            <span>Session alerts</span>
+            <span>
+              Session alerts
+            </span>
+
             <span className="toggle" />
           </div>
 
-          <div className="danger">Delete account</div>
+          <div className="danger">
+            Delete account
+          </div>
         </Card>
       </div>
     </div>
@@ -717,43 +1005,56 @@ function SettingsPage() {
 }
 
 function ThemeToggle() {
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] =
+    useState(true);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.documentElement.dataset.theme =
+      dark ? "dark" : "light";
   }, [dark]);
 
   return (
     <button
       className="icon-btn"
-      onClick={() => setDark((value) => !value)}
+      onClick={() =>
+        setDark((value) => !value)
+      }
       aria-label="Toggle theme"
     >
-      {dark ? <Moon size={17} /> : <Sun size={17} />}
+      {dark ? (
+        <Moon size={17} />
+      ) : (
+        <Sun size={17} />
+      )}
     </button>
   );
 }
 
 export default function PredatorApp() {
-  const [tab, setTab] = useState<Tab>("Dashboard");
-  const [collapsed, setCollapsed] = useState(false);
+  const [tab, setTab] =
+    useState<Tab>("Dashboard");
+
+  const [collapsed, setCollapsed] =
+    useState(false);
 
   const content = useMemo(() => {
     switch (tab) {
       case "Dashboard":
-        return <Dashboard go={setTab} />;
+        return (
+          <Dashboard go={setTab} />
+        );
 
       case "Signal":
-        return <Signals />;
+        return <SignalsPage />;
 
       case "Volume Spike":
-        return <VolumeSpike />;
+        return <VolumeSpikePage />;
 
       case "BTC Report":
-        return <BTCReport />;
+        return <BTCReportPage />;
 
       case "Portfolio":
-        return <Portfolio />;
+        return <PortfolioPage />;
 
       case "Calculator":
         return <CalculatorPage />;
@@ -762,42 +1063,64 @@ export default function PredatorApp() {
         return <SettingsPage />;
 
       default:
-        return <Dashboard go={setTab} />;
+        return (
+          <Dashboard go={setTab} />
+        );
     }
   }, [tab]);
 
   return (
-    <div className={"app " + (collapsed ? "collapsed" : "")}>
+    <div
+      className={
+        "app " +
+        (collapsed ? "collapsed" : "")
+      }
+    >
       <aside className="sidebar">
         <div
-          onClick={() => setTab("Dashboard")}
+          onClick={() =>
+            setTab("Dashboard")
+          }
           className="logo-link"
         >
           <Logo />
         </div>
 
         <nav>
-          {tabs.map(({ name, icon: Icon }) => (
-            <button
-              key={name}
-              className={
-                tab === name ? "nav-item active" : "nav-item"
-              }
-              onClick={() => setTab(name)}
-            >
-              <Icon size={18} />
-              <span>{name}</span>
-            </button>
-          ))}
+          {tabs.map(
+            ({ name, icon: Icon }) => (
+              <button
+                key={name}
+                className={
+                  tab === name
+                    ? "nav-item active"
+                    : "nav-item"
+                }
+                onClick={() =>
+                  setTab(name)
+                }
+              >
+                <Icon size={18} />
+                <span>{name}</span>
+              </button>
+            )
+          )}
         </nav>
 
         <div className="side-bottom">
           <div className="user-mini">
-            <div className="avatar">P</div>
+            <div className="avatar">
+              P
+            </div>
 
             <div>
-              <b>Predator User</b>
-              <span>Free account</span>
+              <b>
+                Predator User
+              </b>
+
+              <span>
+                Free account
+              </span>
             </div>
           </div>
         </div>
@@ -807,7 +1130,11 @@ export default function PredatorApp() {
         <header className="topbar">
           <button
             className="icon-btn"
-            onClick={() => setCollapsed((value) => !value)}
+            onClick={() =>
+              setCollapsed(
+                (value) => !value
+              )
+            }
             aria-label="Toggle sidebar"
           >
             <PanelLeft size={18} />
@@ -816,20 +1143,30 @@ export default function PredatorApp() {
           <SessionBar />
 
           <div className="top-actions">
-            <button className="icon-btn" aria-label="Notifications">
+            <button
+              className="icon-btn"
+              aria-label="Notifications"
+            >
               <Bell size={17} />
             </button>
 
             <div className="profile">
-              <div className="avatar">P</div>
-              <span>Predator User</span>
+              <div className="avatar">
+                P
+              </div>
+
+              <span>
+                Predator User
+              </span>
             </div>
 
             <ThemeToggle />
           </div>
         </header>
 
-        <div className="content">{content}</div>
+        <div className="content">
+          {content}
+        </div>
       </main>
     </div>
   );
