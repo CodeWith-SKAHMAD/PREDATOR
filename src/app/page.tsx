@@ -1,16 +1,9 @@
-
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
-import {
-  LockKeyhole,
-  Mail,
-  MessageCircle,
-  UserRound,
-} from "lucide-react";
-
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import type { User } from "@supabase/supabase-js";
-
+import { LockKeyhole, Mail, MessageCircle, UserRound } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import PredatorApp from "@/components/PredatorApp";
 
@@ -21,7 +14,6 @@ function LoginPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -31,19 +23,14 @@ function LoginPage() {
       setError("Supabase is not configured.");
       return;
     }
-
     setError("");
     setMessage("");
     setLoading(true);
 
-    const { error: oauthError } =
-      await supabase.auth.signInWithOAuth({
-        provider: "discord",
-        options: {
-          redirectTo:
-            `${window.location.origin}/auth/callback`,
-        },
-      });
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: "discord",
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
 
     if (oauthError) {
       setError(oauthError.message);
@@ -51,11 +38,8 @@ function LoginPage() {
     }
   }
 
-  async function handleEmailAuth(
-    event: FormEvent<HTMLFormElement>
-  ) {
+  async function handleEmailAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     if (!supabase) {
       setError("Supabase is not configured.");
       return;
@@ -66,49 +50,36 @@ function LoginPage() {
     setLoading(true);
 
     if (mode === "login") {
-      const { error: loginError } =
-        await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-      if (loginError) {
-        setError(loginError.message);
-      }
+      const { error: loginError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (loginError) setError(loginError.message);
     } else {
       if (!name.trim()) {
         setError("Please enter your name.");
         setLoading(false);
         return;
       }
-
       if (password.length < 6) {
-        setError(
-          "Password must be at least 6 characters."
-        );
+        setError("Password must be at least 6 characters.");
         setLoading(false);
         return;
       }
 
-      const { data, error: signupError } =
-        await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              full_name: name.trim(),
-            },
-            emailRedirectTo:
-              `${window.location.origin}/auth/callback`,
-          },
-        });
+      const { data, error: signupError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { full_name: name.trim() },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
 
       if (signupError) {
         setError(signupError.message);
       } else if (!data.session) {
-        setMessage(
-          "Account created. Check your email to confirm your account."
-        );
+        setMessage("Account created. Check your email to confirm your account.");
       } else {
         setMessage("Account created successfully.");
       }
@@ -122,7 +93,6 @@ function LoginPage() {
       setError("Supabase is not configured.");
       return;
     }
-
     if (!email.trim()) {
       setError("Enter your email first.");
       return;
@@ -132,351 +102,75 @@ function LoginPage() {
     setMessage("");
     setLoading(true);
 
-    const { error: resetError } =
-      await supabase.auth.resetPasswordForEmail(
-        email,
-        {
-          redirectTo:
-            `${window.location.origin}/auth/callback`,
-        }
-      );
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/callback`,
+    });
 
-    if (resetError) {
-      setError(resetError.message);
-    } else {
-      setMessage(
-        "Password reset email sent. Check your inbox."
-      );
-    }
+    if (resetError) setError(resetError.message);
+    else setMessage("Password reset email sent. Check your inbox.");
 
     setLoading(false);
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        width: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "24px",
-        background:
-          "linear-gradient(90deg, rgba(0,0,0,.92), rgba(0,0,0,.55)), url('/predator-login-bg.png') center / cover no-repeat",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: "460px",
-        }}
-      >
-        <div
-          className="glass-card"
-          style={{
-            padding: "30px",
-            background:
-              "rgba(5,5,5,.72)",
-            borderColor:
-              "rgba(255,255,255,.12)",
-            boxShadow:
-              "0 30px 100px rgba(0,0,0,.55)",
-          }}
-        >
-          <div
-            style={{
-              textAlign: "center",
-              marginBottom: "26px",
-            }}
-          >
-            <img
-              src="/predator-logo.png"
-              alt="PREDATOR"
-              style={{
-                width: "100px",
-                height: "100px",
-                objectFit: "contain",
-                margin: "0 auto 12px",
-              }}
-            />
-
-            <h1
-              style={{
-                fontFamily: "Oxanium, sans-serif",
-                fontSize: "28px",
-                letterSpacing: "2px",
-              }}
-            >
-              PREDATOR
-            </h1>
-
-            <p className="muted">
-              Crypto Intelligence & Screener
-            </p>
+    <main className="auth-page">
+      <div className="auth-shell">
+        <div className="glass-card auth-card">
+          <div className="auth-brand">
+            <img src="/predator-logo.png" alt="PREDATOR" className="auth-logo" />
+            <h1>PREDATOR</h1>
+            <p className="muted">Crypto Intelligence &amp; Screener</p>
           </div>
 
-          <button
-            className="glass-btn"
-            onClick={loginWithDiscord}
-            disabled={loading}
-            style={{
-              width: "100%",
-              justifyContent: "center",
-              padding: "13px",
-              borderColor:
-                "rgba(239,35,60,.28)",
-              background:
-                "rgba(239,35,60,.08)",
-              marginBottom: "18px",
-            }}
-          >
+          <button className="glass-btn auth-discord" onClick={loginWithDiscord} disabled={loading}>
             <MessageCircle size={18} />
-
-            {loading
-              ? "Connecting..."
-              : "Continue with Discord"}
+            {loading ? "Connecting..." : "Continue with Discord"}
           </button>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              margin: "18px 0",
-              color: "#666",
-              fontSize: "11px",
-            }}
-          >
-            <div
-              style={{
-                height: "1px",
-                flex: 1,
-                background:
-                  "rgba(255,255,255,.08)",
-              }}
-            />
+          <div className="auth-divider"><span />OR<span /></div>
 
-            OR
-
-            <div
-              style={{
-                height: "1px",
-                flex: 1,
-                background:
-                  "rgba(255,255,255,.08)",
-              }}
-            />
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              gap: "8px",
-              marginBottom: "20px",
-            }}
-          >
-            <button
-              className={
-                mode === "login"
-                  ? "chip active"
-                  : "chip"
-              }
-              onClick={() => {
-                setMode("login");
-                setError("");
-                setMessage("");
-              }}
-              style={{
-                flex: 1,
-              }}
-            >
+          <div className="auth-tabs">
+            <button className={mode === "login" ? "chip active" : "chip"} onClick={() => { setMode("login"); setError(""); setMessage(""); }}>
               Login
             </button>
-
-            <button
-              className={
-                mode === "signup"
-                  ? "chip active"
-                  : "chip"
-              }
-              onClick={() => {
-                setMode("signup");
-                setError("");
-                setMessage("");
-              }}
-              style={{
-                flex: 1,
-              }}
-            >
+            <button className={mode === "signup" ? "chip active" : "chip"} onClick={() => { setMode("signup"); setError(""); setMessage(""); }}>
               Create Account
             </button>
           </div>
 
-          <form
-            onSubmit={handleEmailAuth}
-            className="form-grid"
-            style={{
-              gridTemplateColumns: "1fr",
-              marginTop: 0,
-            }}
-          >
+          <form onSubmit={handleEmailAuth} className="form-grid auth-form-grid">
             {mode === "signup" && (
               <label>
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                  }}
-                >
-                  <UserRound size={13} />
-                  Name
-                </span>
-
-                <input
-                  value={name}
-                  onChange={(event) =>
-                    setName(event.target.value)
-                  }
-                  placeholder="Your name"
-                  autoComplete="name"
-                />
+                <span className="input-label"><UserRound size={13} />Name</span>
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" autoComplete="name" />
               </label>
             )}
 
             <label>
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}
-              >
-                <Mail size={13} />
-                Email
-              </span>
-
-              <input
-                type="email"
-                value={email}
-                onChange={(event) =>
-                  setEmail(event.target.value)
-                }
-                placeholder="you@example.com"
-                autoComplete="email"
-                required
-              />
+              <span className="input-label"><Mail size={13} />Email</span>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required />
             </label>
 
             <label>
-              <span
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}
-              >
-                <LockKeyhole size={13} />
-                Password
-              </span>
-
-              <input
-                type="password"
-                value={password}
-                onChange={(event) =>
-                  setPassword(event.target.value)
-                }
-                placeholder="••••••••"
-                autoComplete={
-                  mode === "login"
-                    ? "current-password"
-                    : "new-password"
-                }
-                required
-              />
+              <span className="input-label"><LockKeyhole size={13} />Password</span>
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" autoComplete={mode === "login" ? "current-password" : "new-password"} required />
             </label>
 
-            <button
-              className="glass-btn"
-              type="submit"
-              disabled={loading}
-              style={{
-                width: "100%",
-                justifyContent: "center",
-                padding: "12px",
-              }}
-            >
-              {loading
-                ? "Please wait..."
-                : mode === "login"
-                  ? "Login"
-                  : "Create Account"}
+            <button className="glass-btn auth-submit" type="submit" disabled={loading}>
+              {loading ? "Please wait..." : mode === "login" ? "Login" : "Create Account"}
             </button>
           </form>
 
           {mode === "login" && (
-            <button
-              onClick={resetPassword}
-              disabled={loading}
-              className="text-btn"
-              style={{
-                width: "100%",
-                justifyContent: "center",
-                marginTop: "14px",
-                padding: "8px",
-              }}
-            >
+            <button onClick={resetPassword} disabled={loading} className="text-btn auth-forgot">
               Forgot password?
             </button>
           )}
 
-          {error && (
-            <div
-              style={{
-                marginTop: "16px",
-                padding: "11px",
-                borderRadius: "10px",
-                color: "#ff7180",
-                background:
-                  "rgba(239,35,60,.08)",
-                border:
-                  "1px solid rgba(239,35,60,.2)",
-                fontSize: "12px",
-              }}
-            >
-              {error}
-            </div>
-          )}
+          {error && <div className="auth-message error">{error}</div>}
+          {message && <div className="auth-message success">{message}</div>}
 
-          {message && (
-            <div
-              style={{
-                marginTop: "16px",
-                padding: "11px",
-                borderRadius: "10px",
-                color: "#65e397",
-                background:
-                  "rgba(67,209,125,.07)",
-                border:
-                  "1px solid rgba(67,209,125,.18)",
-                fontSize: "12px",
-              }}
-            >
-              {message}
-            </div>
-          )}
-
-          <p
-            className="muted"
-            style={{
-              textAlign: "center",
-              marginTop: "22px",
-              lineHeight: 1.6,
-            }}
-          >
-            By continuing, you agree to use
-            PREDATOR responsibly.
-          </p>
+          <p className="muted auth-disclaimer">Use PREDATOR responsibly. Market data and signals are informational.</p>
         </div>
       </div>
     </main>
@@ -484,11 +178,8 @@ function LoginPage() {
 }
 
 function AuthGate() {
-  const [user, setUser] =
-    useState<User | null>(null);
-
-  const [loading, setLoading] =
-    useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!supabase) {
@@ -498,24 +189,16 @@ function AuthGate() {
 
     let mounted = true;
 
-    supabase.auth.getSession().then(
-      ({ data }) => {
-        if (!mounted) return;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setUser(data.session?.user ?? null);
+      setLoading(false);
+    });
 
-        setUser(data.session?.user ?? null);
-        setLoading(false);
-      }
-    );
-
-    const {
-      data: authListener,
-    } =
-      supabase.auth.onAuthStateChange(
-        (_event, session) => {
-          setUser(session?.user ?? null);
-          setLoading(false);
-        }
-      );
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
 
     return () => {
       mounted = false;
@@ -525,42 +208,14 @@ function AuthGate() {
 
   if (loading) {
     return (
-      <main
-        style={{
-          minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          background: "#050505",
-        }}
-      >
-        <div
-          style={{
-            textAlign: "center",
-          }}
-        >
-          <img
-            src="/predator-logo.png"
-            alt="PREDATOR"
-            style={{
-              width: "74px",
-              height: "74px",
-              objectFit: "contain",
-            }}
-          />
-
-          <p className="muted">
-            Loading PREDATOR...
-          </p>
-        </div>
+      <main className="auth-loading">
+        <img src="/predator-logo.png" alt="PREDATOR" className="auth-loading-logo" />
+        <p className="muted">Loading PREDATOR...</p>
       </main>
     );
   }
 
-  if (!user) {
-    return <LoginPage />;
-  }
-
-  return <PredatorApp user={user} />;
+  return user ? <PredatorApp user={user} /> : <LoginPage />;
 }
 
 export default function Home() {
