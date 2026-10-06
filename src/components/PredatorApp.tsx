@@ -470,9 +470,6 @@ function Signals({
     incomingVolume: number;
     rsi: number | null;
     funding: number | null;
-    openInterest: number | null;
-    openInterestUsd: number | null;
-    openInterestChange: number | null;
     atrPercent: number | null;
     supportDistance: number;
     resistanceDistance: number;
@@ -1060,11 +1057,11 @@ function Signals({
                       </span>
 
                       <span>
-                        OI Change
+                        ATR
                         <b>
-                          {signal.openInterestChange === null
+                          {signal.atrPercent === null
                             ? "N/A"
-                            : `${signal.openInterestChange >= 0 ? "+" : ""}${signal.openInterestChange.toFixed(1)}%`}
+                            : `${signal.atrPercent.toFixed(2)}%`}
                         </b>
                       </span>
                     </div>
