@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 60;
 
 const SPOT_BASES = [
   "https://data-api.binance.vision",
@@ -66,19 +67,10 @@ type Kline = [
   string,
 ];
 
-type FundingRow = {
-  symbol: string;
-  fundingRate: string;
-};
-
-type PremiumIndexRow = {
-  symbol: string;
-  lastFundingRate?: string;
-};
-
 type Candle = {
   openTime: number;
   closeTime: number;
+  open: number;
   high: number;
   low: number;
   close: number;
@@ -118,7 +110,6 @@ type SignalRow = {
   volumeSpike: number;
   incomingVolume: number;
   rsi: number | null;
-  funding: number | null;
   atrPercent: number | null;
   support: number;
   supportDistance: number;
@@ -129,6 +120,7 @@ type SignalRow = {
   liquidity: number;
   spreadBps: number | null;
   capturedAt: string;
+  expiresAt: string;
   tools: Record<string, ToolResult>;
   reasons: string[];
 };
@@ -185,6 +177,22 @@ async function safeFetch<T>(bases: string[], path: string): Promise<T | null> {
   }
 }
 
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const runner = async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  };
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => runner());
+  await Promise.all(workers);
+  return results;
+}
+
 function toClosedCandles(rows: Kline[]): Candle[] {
   const now = Date.now();
 
@@ -193,6 +201,7 @@ function toClosedCandles(rows: Kline[]): Candle[] {
     .map((row) => ({
       openTime: Number(row[0]),
       closeTime: Number(row[6]),
+      open: Number(row[1]),
       high: Number(row[2]),
       low: Number(row[3]),
       close: Number(row[4]),
@@ -376,14 +385,6 @@ function rsiTool(value: number | null): ToolResult {
   return tool(0, `RSI ${value.toFixed(1)} outside setup zone`, "NEUTRAL");
 }
 
-function fundingTool(value: number | null): ToolResult {
-  if (value === null) return tool(0, "Funding unavailable", "NEUTRAL");
-
-  const pct = value * 100;
-  if (pct <= -0.03) return tool(10, `Negative funding ${pct.toFixed(3)}%`, "LONG");
-  if (pct >= 0.03) return tool(10, `Positive funding ${pct.toFixed(3)}%`, "SHORT");
-  return tool(0, `Neutral funding ${pct.toFixed(3)}%`, "NEUTRAL");
-}
 
 function liquidityTool(volume24h: number, spreadBps: number | null): ToolResult {
   const volumeOk = volume24h >= 50_000_000;
@@ -489,54 +490,137 @@ async function getKlines(symbol: string, interval: "15m" | "1h", limit: number) 
   return toClosedCandles(rows);
 }
 
-async function getFundingForSymbol(
-  symbol: string,
-  globalValue: string | undefined,
-): Promise<number | null> {
-  if (globalValue !== undefined) {
-    const value = Number(globalValue);
-    if (Number.isFinite(value)) return value;
+
+function aggregateCandles(candles: Candle[], bucketMs: number): Candle[] {
+  if (!candles.length) return [];
+  const map = new Map<number, Candle>();
+  for (const candle of candles) {
+    const bucket = Math.floor(candle.openTime / bucketMs) * bucketMs;
+    const existing = map.get(bucket);
+    if (!existing) {
+      map.set(bucket, { ...candle, openTime: bucket });
+      continue;
+    }
+    existing.high = Math.max(existing.high, candle.high);
+    existing.low = Math.min(existing.low, candle.low);
+    existing.close = candle.close;
+    existing.closeTime = candle.closeTime;
+    existing.volume += candle.volume;
+    existing.quoteVolume += candle.quoteVolume;
   }
+  return [...map.values()].sort((a, b) => a.openTime - b.openTime);
+}
 
-  // Prefer the single-symbol premium-index endpoint. It is the most direct
-  // public source for the latest perpetual funding rate.
-  const premium = await safeFetch<PremiumIndexRow>(
-    FUTURES_BASES,
-    `/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`,
-  );
-
-  if (premium?.lastFundingRate !== undefined) {
-    const parsed = Number(premium.lastFundingRate);
-    if (Number.isFinite(parsed)) return parsed;
+function collectSwingLevels(candles: Candle[], kind: "support" | "resistance", weight: number) {
+  const values: Array<{ price: number; weight: number }> = [];
+  if (candles.length < 7) return values;
+  const start = Math.max(2, candles.length - 160);
+  for (let i = start; i < candles.length - 2; i += 1) {
+    const current = candles[i];
+    const left = candles.slice(i - 2, i);
+    const right = candles.slice(i + 1, i + 3);
+    const recentBonus = i >= candles.length - 32 ? 1.25 : 1;
+    if (kind === "support") {
+      const isSwing = left.every((c) => current.low <= c.low) && right.every((c) => current.low <= c.low);
+      if (isSwing) values.push({ price: current.low, weight: weight * recentBonus });
+    } else {
+      const isSwing = left.every((c) => current.high >= c.high) && right.every((c) => current.high >= c.high);
+      if (isSwing) values.push({ price: current.high, weight: weight * recentBonus });
+    }
   }
+  return values;
+}
 
-  // Fallback to the public funding-rate history endpoint.
-  const latest = await safeFetch<FundingRow[]>(
-    FUTURES_BASES,
-    `/fapi/v1/fundingRate?symbol=${encodeURIComponent(symbol)}&limit=1`,
-  );
+function clusterLevels(items: Array<{ price: number; weight: number }>, mergePct = 0.004) {
+  const clusters: Array<{ price: number; weight: number; touches: number }> = [];
+  for (const item of items.sort((a, b) => a.price - b.price)) {
+    const existing = clusters.find((cluster) => Math.abs(item.price / cluster.price - 1) <= mergePct);
+    if (!existing) {
+      clusters.push({ price: item.price, weight: item.weight, touches: 1 });
+    } else {
+      const total = existing.weight + item.weight;
+      existing.price = (existing.price * existing.weight + item.price * item.weight) / total;
+      existing.weight = total;
+      existing.touches += 1;
+    }
+  }
+  return clusters;
+}
 
-  const value = latest?.[0]?.fundingRate;
-  if (value === undefined) return null;
+function majorLevels(price: number, c15: Candle[], c1h: Candle[], c4h: Candle[]) {
+  const supportItems = [
+    ...collectSwingLevels(c15, "support", 1),
+    ...collectSwingLevels(c1h, "support", 2),
+    ...collectSwingLevels(c4h, "support", 4),
+  ].filter((item) => item.price < price);
+  const resistanceItems = [
+    ...collectSwingLevels(c15, "resistance", 1),
+    ...collectSwingLevels(c1h, "resistance", 2),
+    ...collectSwingLevels(c4h, "resistance", 4),
+  ].filter((item) => item.price > price);
 
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  const fallbackSupport = Math.min(...c1h.slice(-72).map((c) => c.low));
+  const fallbackResistance = Math.max(...c1h.slice(-72).map((c) => c.high));
+
+  const supportClusters = clusterLevels(supportItems).filter((c) => c.price > price * 0.80);
+  const resistanceClusters = clusterLevels(resistanceItems).filter((c) => c.price < price * 1.20);
+
+  const support = supportClusters.sort((a, b) => {
+    const aScore = a.weight * 10 + a.touches * 2 - Math.abs(price - a.price) / price * 100;
+    const bScore = b.weight * 10 + b.touches * 2 - Math.abs(price - b.price) / price * 100;
+    return bScore - aScore;
+  })[0]?.price ?? fallbackSupport;
+
+  const resistance = resistanceClusters.sort((a, b) => {
+    const aScore = a.weight * 10 + a.touches * 2 - Math.abs(a.price - price) / price * 100;
+    const bScore = b.weight * 10 + b.touches * 2 - Math.abs(b.price - price) / price * 100;
+    return bScore - aScore;
+  })[0]?.price ?? fallbackResistance;
+
+  return {
+    support: Number.isFinite(support) ? support : price,
+    resistance: Number.isFinite(resistance) ? resistance : price,
+  };
+}
+
+function volumePressureTool(candle: Candle, averageQuoteVolume: number): ToolResult {
+  const range = Math.max(candle.high - candle.low, candle.close * 0.000001);
+  const body = candle.close - candle.open;
+  const bodyRatio = Math.abs(body) / range;
+  const volumeConfirmed = candle.quoteVolume >= averageQuoteVolume * 1.1;
+  if (!volumeConfirmed || bodyRatio < 0.45) return tool(0, "No strong volume pressure", "NEUTRAL");
+  if (body > 0) return tool(10, "Strong buying pressure", "LONG");
+  if (body < 0) return tool(10, "Strong selling pressure", "SHORT");
+  return tool(0, "Balanced pressure", "NEUTRAL");
+}
+
+function emaSlope(values: number[], period: number): number {
+  if (values.length < period + 3) return 0;
+  const now = ema(values, period);
+  const prev = ema(values.slice(0, -3), period);
+  return prev !== 0 ? ((now - prev) / prev) * 100 : 0;
+}
+
+function rsiSlope(values: number[]): number {
+  if (values.length < 20) return 0;
+  const now = rsi(values) ?? 50;
+  const prev = rsi(values.slice(0, -2)) ?? 50;
+  return now - prev;
 }
 
 
 export async function GET() {
   try {
-    const { windowId, capturedAt, scanId } = windowMeta();
+    const { windowId, scanId } = windowMeta();
 
     if (scanCache && scanCache.windowId === windowId) {
       return NextResponse.json(scanCache.data);
     }
 
-    const [exchangeInfo, tickers, books, fundingAll] = await Promise.all([
+    const [exchangeInfo, tickers, books] = await Promise.all([
       fetchJson<{ symbols: SpotSymbol[] }>(SPOT_BASES, "/api/v3/exchangeInfo"),
       fetchJson<Ticker[]>(SPOT_BASES, "/api/v3/ticker/24hr"),
       safeFetch<BookTicker[]>(SPOT_BASES, "/api/v3/ticker/bookTicker"),
-      safeFetch<PremiumIndexRow[]>(FUTURES_BASES, "/fapi/v1/premiumIndex"),
     ]);
 
     const tradable = exchangeInfo.symbols
@@ -544,14 +628,12 @@ export async function GET() {
         item.status === "TRADING" &&
         item.quoteAsset === "USDT" &&
         item.isSpotTradingAllowed !== false &&
-        !STABLE_BASES.has(item.baseAsset),
+        !STABLE_BASES.has(item.baseAsset) && !/(UP|DOWN|BULL|BEAR|HEDGE)$/.test(item.baseAsset),
       )
       .map((item) => item.symbol);
 
     const tickerMap = new Map(tickers.map((item) => [item.symbol, item]));
     const bookMap = new Map((books ?? []).map((item) => [item.symbol, item]));
-    const fundingMap = new Map((fundingAll ?? []).map((item) => [item.symbol, item.lastFundingRate]));
-
     const candidates = tradable
       .map((symbol) => {
         const ticker = tickerMap.get(symbol);
@@ -560,15 +642,11 @@ export async function GET() {
         const price = Number(ticker.lastPrice);
         const change24h = Number(ticker.priceChangePercent);
         const volume24h = Number(ticker.quoteVolume);
-
         if (!Number.isFinite(price) || !Number.isFinite(change24h) || !Number.isFinite(volume24h)) return null;
-        if (volume24h < 20_000_000) return null;
-
         return { symbol, price, change24h, volume24h };
       })
       .filter((item): item is { symbol: string; price: number; change24h: number; volume24h: number } => item !== null)
-      .sort((a, b) => b.volume24h - a.volume24h)
-      .slice(0, 10);
+      .sort((a, b) => b.volume24h - a.volume24h);
 
     const [btc15, btc1h] = await Promise.all([
       getKlines("BTCUSDT", "15m", 120),
@@ -594,20 +672,19 @@ export async function GET() {
     const btcBear = btc15Close < btc15Ema9 && btc15Ema9 < btc15Ema21 && btc15Ema21 < btc15Ema50 && btc1hClose < btc1hEma21 && btc1hEma21 <= btc1hEma50 && btc15Momentum < 0 && btc1hMomentum < 0;
     const btcRegime: "Bullish" | "Bearish" | "Neutral" = btcBull ? "Bullish" : btcBear ? "Bearish" : "Neutral";
 
-    const rows = await Promise.all(
-      candidates.map(async (candidate): Promise<SignalRow | null> => {
+    const rows = await mapWithConcurrency(candidates, 18, async (candidate): Promise<SignalRow | null> => {
         try {
-          const [raw15m, raw1h, funding] = await Promise.all([
+          const [raw15m, raw1h] = await Promise.all([
             safeFetch<Kline[]>(SPOT_BASES, `/api/v3/klines?symbol=${candidate.symbol}&interval=15m&limit=121`),
             safeFetch<Kline[]>(SPOT_BASES, `/api/v3/klines?symbol=${candidate.symbol}&interval=1h&limit=121`),
-            getFundingForSymbol(candidate.symbol, fundingMap.get(candidate.symbol)),
           ]);
 
           if (!raw15m || !raw1h) return null;
 
           const c15 = toClosedCandles(raw15m);
           const c1h = toClosedCandles(raw1h);
-          if (c15.length < 60 || c1h.length < 40) return null;
+          const c4h = aggregateCandles(c1h, 4 * 60 * 60 * 1000);
+          if (c15.length < 60 || c1h.length < 60 || c4h.length < 18) return null;
 
           const closes15 = c15.map((c) => c.close);
           const closes1h = c1h.map((c) => c.close);
@@ -623,17 +700,27 @@ export async function GET() {
           const ema9 = ema(closes15, 9);
           const ema21 = ema(closes15, 21);
           const ema50 = ema(closes15, 50);
+          const ema1h9 = ema(closes1h, 9);
           const ema1h21 = ema(closes1h, 21);
           const ema1h50 = ema(closes1h, 50);
           const vwapValue = vwap(c15);
+          const vwap1hValue = vwap(c1h, 24);
           const rsiValue = rsi(closes15);
+          const rsi1hValue = rsi(closes1h);
+          const rsi15Slope = rsiSlope(closes15);
+          const rsi1hSlope = rsiSlope(closes1h);
           const macdValue = macd(closes15);
+          const macd1hValue = macd(closes1h);
           const atrValue = atr(c15);
           const adxValue = adx(c15);
+          const adx1hValue = adx(c1h);
+          const ema9Slope15 = emaSlope(closes15, 9);
+          const ema21Slope15 = emaSlope(closes15, 21);
+          const ema21Slope1h = emaSlope(closes1h, 21);
 
-          const structure = c15.slice(-21, -1);
-          const support = Math.min(...structure.map((c) => c.low));
-          const resistance = Math.max(...structure.map((c) => c.high));
+          const levels = majorLevels(current.close, c15, c1h, c4h);
+          const support = levels.support;
+          const resistance = levels.resistance;
 
           const change15m = previous.close > 0 ? ((current.close / previous.close) - 1) * 100 : 0;
           const oneHourAgo = c15[Math.max(0, c15.length - 5)]?.close ?? current.close;
@@ -655,70 +742,85 @@ export async function GET() {
           const distanceToSupport = current.close > 0 ? ((current.close - support) / current.close) * 100 : 0;
           const distanceToResistance = current.close > 0 ? ((resistance - current.close) / current.close) * 100 : 0;
 
-          const breakoutLong = current.close > resistance && current.volume >= averageVolume * 1.2 && current.close > previous.close;
-          const breakoutShort = current.close < support && current.volume >= averageVolume * 1.2 && current.close < previous.close;
+          const previousStructure15 = c15.slice(-22, -1);
+          const previousHigh = Math.max(...previousStructure15.map((c) => c.high));
+          const previousLow = Math.min(...previousStructure15.map((c) => c.low));
+          const breakoutLong = current.close > previousHigh && current.quoteVolume >= averageVolume * 1.2 && current.close > previous.close;
+          const breakoutShort = current.close < previousLow && current.quoteVolume >= averageVolume * 1.2 && current.close < previous.close;
 
           const tools: Record<string, ToolResult> = {};
+          const emaBull15 = current.close > ema9 && ema9 > ema21 && ema21 > ema50 && ema9Slope15 > 0 && ema21Slope15 > 0;
+          const emaBear15 = current.close < ema9 && ema9 < ema21 && ema21 < ema50 && ema9Slope15 < 0 && ema21Slope15 < 0;
+          const emaBull1h = c1h[c1h.length - 1].close > ema1h9 && ema1h9 > ema1h21 && ema1h21 > ema1h50 && ema21Slope1h > 0;
+          const emaBear1h = c1h[c1h.length - 1].close < ema1h9 && ema1h9 < ema1h21 && ema1h21 < ema1h50 && ema21Slope1h < 0;
+
           tools["Volume Spike"] = volumeTool(volumeSpike, change15m);
           tools["EMA Trend"] = binaryDirection(
-            current.close > ema9 && ema9 > ema21 && ema21 > ema50,
-            current.close < ema9 && ema9 < ema21 && ema21 < ema50,
-            "EMA 9/21/50 bullish",
-            "EMA 9/21/50 bearish",
+            emaBull15 && emaBull1h,
+            emaBear15 && emaBear1h,
+            "15m + 1h EMA alignment bullish",
+            "15m + 1h EMA alignment bearish",
           );
           tools.VWAP = binaryDirection(
-            vwapValue !== null && current.close >= vwapValue * 1.002,
-            vwapValue !== null && current.close <= vwapValue * 0.998,
-            "Above VWAP",
-            "Below VWAP",
+            vwapValue !== null && vwap1hValue !== null && current.close > vwapValue && current.close > vwap1hValue,
+            vwapValue !== null && vwap1hValue !== null && current.close < vwapValue && current.close < vwap1hValue,
+            "Above 15m + 1h VWAP",
+            "Below 15m + 1h VWAP",
           );
-          tools.RSI = rsiTool(rsiValue);
+          const rsiLong = rsiValue !== null && rsi1hValue !== null && rsiValue >= 52 && rsiValue <= 68 && rsi1hValue >= 50 && rsi1hValue <= 70 && rsi15Slope > 0 && rsi1hSlope >= -0.25;
+          const rsiShort = rsiValue !== null && rsi1hValue !== null && rsiValue >= 32 && rsiValue <= 48 && rsi1hValue >= 30 && rsi1hValue <= 50 && rsi15Slope < 0 && rsi1hSlope <= 0.25;
+          tools.RSI = binaryDirection(rsiLong, rsiShort, `15m ${rsiValue?.toFixed(1)} + 1h ${rsi1hValue?.toFixed(1)} bullish`, `15m ${rsiValue?.toFixed(1)} + 1h ${rsi1hValue?.toFixed(1)} bearish`);
           tools.MACD = binaryDirection(
-            macdValue.histogram > 0 && macdValue.line > 0,
-            macdValue.histogram < 0 && macdValue.line < 0,
-            "MACD bullish",
-            "MACD bearish",
+            macdValue.histogram > 0 && macd1hValue.histogram > 0 && macdValue.line > macdValue.signal,
+            macdValue.histogram < 0 && macd1hValue.histogram < 0 && macdValue.line < macdValue.signal,
+            "15m + 1h MACD bullish",
+            "15m + 1h MACD bearish",
           );
           tools.Breakout = binaryDirection(
             breakoutLong,
             breakoutShort,
-            "Confirmed 15m breakout",
-            "Confirmed 15m breakdown",
+            "Confirmed structure breakout",
+            "Confirmed structure breakdown",
           );
-          tools["Market Structure"] = marketStructureTool(current.close, support, resistance, ema21, change15m);
-          tools.Funding = fundingTool(funding);
+          tools["Market Structure"] = binaryDirection(
+            current.close > ema21 && change15m > 0 && change1h > 0 && current.close < resistance,
+            current.close < ema21 && change15m < 0 && change1h < 0 && current.close > support,
+            "15m + 1h bullish structure",
+            "15m + 1h bearish structure",
+          );
           tools["BTC Confirmation"] = binaryDirection(
-            btcBull && current.close > ema21 && change1h > 0,
-            btcBear && current.close < ema21 && change1h < 0,
+            btcBull && change1h > 0 && current.close > ema21,
+            btcBear && change1h < 0 && current.close < ema21,
             "BTC trend confirms long",
             "BTC trend confirms short",
           );
           tools.Liquidity = liquidityTool(candidate.volume24h, spreadBps);
           tools.ATR = atrTool(atrPercent);
           tools["Support / Resistance"] = binaryDirection(
-            distanceToSupport <= 1.5 && distanceToSupport < distanceToResistance,
-            distanceToResistance <= 1.5 && distanceToResistance < distanceToSupport,
-            "Near support with room",
-            "Near resistance with room",
+            distanceToSupport <= 2.0 && distanceToSupport < distanceToResistance,
+            distanceToResistance <= 2.0 && distanceToResistance < distanceToSupport,
+            `Major support ${distanceToSupport.toFixed(2)}% away`,
+            `Major resistance ${distanceToResistance.toFixed(2)}% away`,
           );
           tools["Trend Strength"] = binaryDirection(
-            adxValue !== null && adxValue >= 20 && ema9 > ema21,
-            adxValue !== null && adxValue >= 20 && ema9 < ema21,
-            `ADX ${adxValue === null ? "N/A" : adxValue.toFixed(1)} bullish`,
-            `ADX ${adxValue === null ? "N/A" : adxValue.toFixed(1)} bearish`,
+            adxValue !== null && adx1hValue !== null && adxValue >= 20 && adx1hValue >= 20 && ema21Slope15 > 0,
+            adxValue !== null && adx1hValue !== null && adxValue >= 20 && adx1hValue >= 20 && ema21Slope15 < 0,
+            `ADX ${adxValue?.toFixed(1)} / 1h ${adx1hValue?.toFixed(1)} bullish`,
+            `ADX ${adxValue?.toFixed(1)} / 1h ${adx1hValue?.toFixed(1)} bearish`,
           );
           tools["Momentum Alignment"] = binaryDirection(
-            change15m > 0.15 && momentum1h > 0.3,
-            change15m < -0.15 && momentum1h < -0.3,
+            change15m > 0.15 && change1h > 0.3 && btcRegime !== "Bearish",
+            change15m < -0.15 && change1h < -0.3 && btcRegime !== "Bullish",
             "15m + 1h momentum aligned",
             "15m + 1h momentum aligned",
           );
           tools["Market Regime"] = binaryDirection(
-            ema1h21 > ema1h50 && current.close > ema21 && momentum1h > 0,
-            ema1h21 < ema1h50 && current.close < ema21 && momentum1h < 0,
+            ema1h21 > ema1h50 && rsi1hValue !== null && rsi1hValue >= 50 && momentum1h > 0,
+            ema1h21 < ema1h50 && rsi1hValue !== null && rsi1hValue <= 50 && momentum1h < 0,
             "Bull trend regime",
             "Bear trend regime",
           );
+          tools["Volume Pressure"] = volumePressureTool(current, averageVolume);
 
           const score = Object.values(tools).reduce((sum, currentTool) => sum + currentTool.score, 0);
           const direction = inferDirection(tools, score);
@@ -733,6 +835,9 @@ export async function GET() {
           if (triggered.length) reasons.push(...triggered.slice(0, 4));
           if (reasons.length === 0) reasons.push("Not enough confluence for a trade setup");
 
+          const triggerTimeMs = Math.max(windowId * 30 * 60 * 1000, current.closeTime);
+          const capturedAtForSignal = new Date(triggerTimeMs).toISOString();
+          const expiresAtForSignal = new Date((windowId + 1) * 30 * 60 * 1000).toISOString();
           const invalidation = direction === "LONG"
             ? Math.max(support * 0.998, current.close - (atrValue ?? 0))
             : direction === "SHORT"
@@ -754,7 +859,6 @@ export async function GET() {
             volumeSpike,
             incomingVolume: current.quoteVolume,
             rsi: rsiValue,
-            funding,
             atrPercent,
             support,
             supportDistance: distanceToSupport,
@@ -764,15 +868,15 @@ export async function GET() {
             riskLevel: getRisk(atrPercent, status),
             liquidity: candidate.volume24h,
             spreadBps,
-            capturedAt,
+            capturedAt: capturedAtForSignal,
+            expiresAt: expiresAtForSignal,
             tools,
             reasons: reasons.slice(0, 4),
           };
         } catch {
           return null;
         }
-      }),
-    );
+      });
 
     const data = rows
       .filter((row): row is SignalRow => row !== null)
@@ -780,9 +884,13 @@ export async function GET() {
       .filter((row) => row.score >= 80 && row.direction !== "NEUTRAL")
       .slice(0, 24);
 
+    const nextScanAt = new Date((windowId + 1) * 30 * 60 * 1000).toISOString();
+    const windowStartAt = new Date(windowId * 30 * 60 * 1000).toISOString();
     const response = {
       ok: true as const,
       updatedAt: new Date().toISOString(),
+      windowStartAt,
+      nextScanAt,
       scanId,
       btcRegime,
       scanIntervalMinutes: 30 as const,
