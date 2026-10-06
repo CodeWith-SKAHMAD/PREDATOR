@@ -119,36 +119,232 @@ function Portfolio(){const [qty,setQty]=useState(1); const [entry,setEntry]=useS
 
 function CalculatorPage(){const [a,setA]=useState(100);const [p,setP]=useState(10);const [from,setFrom]=useState("EUR");const [to,setTo]=useState("USD");return <div className="page"><div className="page-head"><div><p className="eyebrow">TOOLS</p><h1>Calculator</h1><p className="muted">Quick trading and currency utilities.</p></div></div><div className="two-col"><Card><span className="label">PERCENTAGE</span><h2>Percentage calculator</h2><div className="form-grid"><label>Main data<input type="number" value={a} onChange={e=>setA(Number(e.target.value))}/></label><label>% input<input type="number" value={p} onChange={e=>setP(Number(e.target.value))}/></label></div><div className="result mono">{(a*p/100).toFixed(2)}</div></Card><Card><span className="label">CURRENCY</span><h2>Converter</h2><div className="form-grid"><label>Amount<input defaultValue="100"/></label><label>From<select value={from} onChange={e=>setFrom(e.target.value)}><option>EUR</option><option>USD</option><option>BDT</option></select></label><label>To<select value={to} onChange={e=>setTo(e.target.value)}><option>USD</option><option>EUR</option><option>BDT</option></select></label></div><p className="muted">Live rates will be connected in the data integration phase.</p></Card></div></div>}
 
-function SettingsPage({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const displayName = getDisplayName(user);
+function SettingsPage({
+  user,
+  onLogout,
+  onProfileNameChange,
+}: {
+  user: User;
+  onLogout: () => void;
+  onProfileNameChange: (name: string) => void;
+}) {
+  const displayNameFromAuth = getDisplayName(user);
   const avatar = getAvatar(user);
   const provider = user.app_metadata?.provider || "email";
 
+  const [name, setName] = useState(displayNameFromAuth);
+  const [experience, setExperience] = useState("Beginner");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadProfile() {
+      if (!supabase) {
+        if (mounted) setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("display_name, trading_experience")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!mounted) return;
+
+      if (error) {
+        setStatus(error.message);
+      } else {
+        const savedName = data?.display_name || displayNameFromAuth;
+        setName(savedName);
+        setExperience(
+          data?.trading_experience || "Beginner"
+        );
+      }
+
+      setLoading(false);
+    }
+
+    loadProfile();
+
+    return () => {
+      mounted = false;
+    };
+  }, [user.id, displayNameFromAuth]);
+
+  async function saveProfile() {
+    if (!supabase) {
+      setStatus("Supabase is not configured.");
+      return;
+    }
+
+    const cleanName = name.trim();
+
+    if (!cleanName) {
+      setStatus("Name cannot be empty.");
+      return;
+    }
+
+    setSaving(true);
+    setStatus("");
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({
+        display_name: cleanName,
+        trading_experience: experience,
+      })
+      .eq("id", user.id);
+
+    if (error) {
+      setStatus(error.message);
+    } else {
+      setName(cleanName);
+      onProfileNameChange(cleanName);
+      setStatus("Profile saved successfully.");
+    }
+
+    setSaving(false);
+  }
+
   return (
     <div className="page">
-      <div className="page-head"><div><p className="eyebrow">ACCOUNT</p><h1>Settings</h1><p className="muted">Profile, preferences and security.</p></div></div>
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">ACCOUNT</p>
+          <h1>Settings</h1>
+          <p className="muted">
+            Profile, preferences and security.
+          </p>
+        </div>
+      </div>
+
       <div className="two-col">
         <Card>
           <span className="label">PROFILE</span>
           <h2>Account details</h2>
+
           <div className="account-profile">
-            {avatar ? <img src={avatar} alt={displayName} className="account-avatar" /> : <div className="account-avatar-fallback">{displayName.slice(0,1).toUpperCase()}</div>}
-            <div><strong>{displayName}</strong><p className="muted">{provider === "discord" ? "Discord account" : "Email account"}</p></div>
+            {avatar ? (
+              <img
+                src={avatar}
+                alt={name}
+                className="account-avatar"
+              />
+            ) : (
+              <div className="account-avatar-fallback">
+                {name.slice(0, 1).toUpperCase()}
+              </div>
+            )}
+
+            <div>
+              <strong>{name}</strong>
+              <p className="muted">
+                {provider === "discord"
+                  ? "Discord account"
+                  : "Email account"}
+              </p>
+            </div>
           </div>
+
           <div className="form-grid">
-            <label>Name<input defaultValue={displayName} disabled /></label>
-            <label>Email<input defaultValue={user.email || ""} disabled /></label>
-            <label>Discord<input defaultValue={provider === "discord" ? "Connected" : "Not connected"} disabled /></label>
-            <label>Trading experience<select defaultValue="Beginner"><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
+            <label>
+              Name
+              <input
+                value={name}
+                onChange={(event) =>
+                  setName(event.target.value)
+                }
+                disabled={loading || saving}
+              />
+            </label>
+
+            <label>
+              Email
+              <input
+                value={user.email || ""}
+                disabled
+              />
+            </label>
+
+            <label>
+              Discord
+              <input
+                value={
+                  provider === "discord"
+                    ? "Connected"
+                    : "Not connected"
+                }
+                disabled
+                readOnly
+              />
+            </label>
+
+            <label>
+              Trading experience
+              <select
+                value={experience}
+                onChange={(event) =>
+                  setExperience(event.target.value)
+                }
+                disabled={loading || saving}
+              >
+                <option value="Beginner">
+                  Beginner
+                </option>
+                <option value="Intermediate">
+                  Intermediate
+                </option>
+                <option value="Advanced">
+                  Advanced
+                </option>
+              </select>
+            </label>
           </div>
+
+          <button
+            className="glass-btn"
+            onClick={saveProfile}
+            disabled={loading || saving}
+          >
+            {saving ? "Saving..." : "Save profile"}
+          </button>
+
+          {status && (
+            <p className="muted" style={{ marginTop: "12px" }}>
+              {status}
+            </p>
+          )}
         </Card>
+
         <Card>
           <span className="label">PREFERENCES</span>
           <h2>Interface</h2>
-          <div className="setting-row"><span>Theme</span><ThemeToggle/></div>
-          <div className="setting-row"><span>Session alerts</span><span className="toggle"/></div>
-          <button className="glass-btn logout-btn" onClick={onLogout}><LogOut size={16}/>Logout</button>
-          <div className="danger">Delete account</div>
+
+          <div className="setting-row">
+            <span>Theme</span>
+            <ThemeToggle />
+          </div>
+
+          <div className="setting-row">
+            <span>Session alerts</span>
+            <span className="toggle" />
+          </div>
+
+          <button
+            className="glass-btn logout-btn"
+            onClick={onLogout}
+          >
+            <LogOut size={16} />
+            Logout
+          </button>
+
+          <div className="danger">
+            Delete account
+          </div>
         </Card>
       </div>
     </div>
@@ -160,7 +356,8 @@ function ThemeToggle(){const [dark,setDark]=useState(true);useEffect(()=>{docume
 export default function PredatorApp({ user }: { user: User }){
   const [tab,setTab]=useState<Tab>("Dashboard");
   const [collapsed,setCollapsed]=useState(false);
-  const displayName = getDisplayName(user);
+  const [profileName, setProfileName] = useState(() => getDisplayName(user));
+  const displayName = profileName;
   const avatar = getAvatar(user);
 
   const logout = async () => {
@@ -168,7 +365,7 @@ export default function PredatorApp({ user }: { user: User }){
       await supabase.auth.signOut();
     }
   };
-  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={setTab}/>;case"Signal":return <Signals/>;case"Volume Spike":return <VolumeSpike/>;case"BTC Report":return <BTCReport/>;case"Portfolio":return <Portfolio/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout}/>;default:return <Dashboard go={setTab}/>}},[tab]);
+  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={setTab}/>;case"Signal":return <Signals/>;case"Volume Spike":return <VolumeSpike/>;case"BTC Report":return <BTCReport/>;case"Portfolio":return <Portfolio/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={setTab}/>}},[tab]);
   return <div className={"app "+(collapsed?"collapsed":"")}>
     <aside className="sidebar"><div onClick={()=>setTab("Dashboard")} className="logo-link"><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>setTab(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
     <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><button className="icon-btn" aria-label="Notifications"><Bell size={17}/></button><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className="content">{content}</div></main>
