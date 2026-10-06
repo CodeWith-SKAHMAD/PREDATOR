@@ -661,6 +661,262 @@ function Dashboard({
 }
 
 
+type CompactSignalCardProps = {
+  baseAsset: string;
+  direction: "LONG" | "SHORT";
+  score: number;
+  status: string;
+  price: number;
+  change15m: number | null;
+  change1h: number | null;
+  support: number | null;
+  resistance: number | null;
+  supportDistance: number | null;
+  resistanceDistance: number | null;
+  fundingRate: number | null;
+  capturedAt?: string;
+  expired?: boolean;
+  onClick: () => void;
+};
+
+function CompactCoinIcon({ baseAsset }: { baseAsset: string }) {
+  const [failed, setFailed] = useState(false);
+  const short = baseAsset.slice(0, 3).toUpperCase();
+  const iconUrl = `https://assets.coincap.io/assets/icons/${baseAsset.toLowerCase()}@2x.png`;
+
+  return failed ? (
+    <div
+      aria-hidden="true"
+      style={{
+        width: 48,
+        height: 48,
+        borderRadius: "50%",
+        display: "grid",
+        placeItems: "center",
+        flex: "0 0 auto",
+        background: "linear-gradient(145deg, rgba(22,35,48,.96), rgba(8,13,19,.98))",
+        border: "1px solid rgba(132,185,255,.35)",
+        boxShadow: "0 0 18px rgba(69,160,255,.12), inset 0 0 12px rgba(255,255,255,.03)",
+        color: "#dff4ff",
+        fontSize: 12,
+        fontWeight: 800,
+        letterSpacing: ".06em",
+      }}
+    >
+      {short}
+    </div>
+  ) : (
+    <img
+      src={iconUrl}
+      alt=""
+      width={48}
+      height={48}
+      onError={() => setFailed(true)}
+      style={{
+        width: 48,
+        height: 48,
+        borderRadius: "50%",
+        objectFit: "cover",
+        flex: "0 0 auto",
+        background: "#0c1118",
+        border: "1px solid rgba(255,255,255,.1)",
+        boxShadow: "0 0 16px rgba(42,226,168,.08)",
+      }}
+    />
+  );
+}
+
+function CompactSignalCard({
+  baseAsset,
+  direction,
+  score,
+  status,
+  price,
+  change15m,
+  change1h,
+  support,
+  resistance,
+  supportDistance,
+  resistanceDistance,
+  fundingRate,
+  capturedAt,
+  expired = false,
+  onClick,
+}: CompactSignalCardProps) {
+  const scorePercent = Math.max(0, Math.min(100, (score / 150) * 100));
+  const accent = direction === "LONG" ? "#10e7a0" : "#ff596d";
+  const scoreText = status || (score >= 120 ? "Extended / Pumped" : score >= 110 ? "Strong" : score >= 100 ? "Valid" : "Observe");
+  const fundingText = fundingRate === null || !Number.isFinite(fundingRate)
+    ? "N/A"
+    : `${fundingRate >= 0 ? "+" : ""}${(fundingRate * 100).toFixed(4)}%`;
+
+  const metricBox = (label: string, value: number | null) => {
+    const positive = typeof value === "number" && value >= 0;
+    return (
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          padding: "9px 11px",
+          borderRadius: 12,
+          border: `1px solid ${positive ? "rgba(16,231,160,.26)" : "rgba(255,89,109,.22)"}`,
+          background: positive ? "linear-gradient(180deg, rgba(16,231,160,.09), rgba(16,231,160,.035))" : "linear-gradient(180deg, rgba(255,89,109,.08), rgba(255,89,109,.025))",
+          boxShadow: "inset 0 0 14px rgba(255,255,255,.018)",
+        }}
+      >
+        <span style={{ display: "block", color: "#95a0ad", fontSize: 10, letterSpacing: ".05em", marginBottom: 3 }}>{label}</span>
+        <strong style={{ color: positive ? "#31efb3" : "#ff6f80", fontSize: 15 }}>{
+          typeof value === "number" ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "N/A"
+        }</strong>
+      </div>
+    );
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        padding: 15,
+        borderRadius: 18,
+        border: "1px solid rgba(125,170,215,.24)",
+        background: "linear-gradient(145deg, rgba(17,25,34,.90), rgba(7,11,16,.96))",
+        boxShadow: "0 18px 35px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.045), inset 0 0 30px rgba(72,126,176,.035)",
+        color: "inherit",
+        cursor: "pointer",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          background: `radial-gradient(circle at 84% 10%, ${direction === "LONG" ? "rgba(16,231,160,.10)" : "rgba(255,89,109,.09)"}, transparent 28%), radial-gradient(circle at 6% 85%, rgba(111,171,255,.055), transparent 28%)`,
+        }}
+      />
+
+      <div style={{ position: "relative" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
+            <CompactCoinIcon baseAsset={baseAsset} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+                <strong style={{ fontSize: 19, letterSpacing: ".015em" }}>{baseAsset}</strong>
+                <span style={{ color: "#84909c", fontSize: 11 }}>USDT</span>
+              </div>
+              <div style={{ color: "#75818d", fontSize: 10, marginTop: 4 }}>{expired ? "EXPIRED SIGNAL" : scoreText}</div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              width: 58,
+              height: 58,
+              borderRadius: "50%",
+              display: "grid",
+              placeItems: "center",
+              flex: "0 0 auto",
+              background: `conic-gradient(${accent} ${scorePercent * 3.6}deg, rgba(115,130,145,.16) 0deg)`,
+              boxShadow: `0 0 19px ${direction === "LONG" ? "rgba(16,231,160,.14)" : "rgba(255,89,109,.13)"}`,
+            }}
+          >
+            <div style={{ width: 48, height: 48, borderRadius: "50%", display: "grid", placeItems: "center", background: "#0b1118", border: "1px solid rgba(255,255,255,.05)" }}>
+              <strong className="mono" style={{ fontSize: 16 }}>{score}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="mono" style={{ fontSize: 28, fontWeight: 800, marginTop: 12, letterSpacing: ".01em" }}>
+          {formatPrice(price)}
+        </div>
+        <div style={{ color: "#74808c", fontSize: 9, marginTop: 2 }}>CURRENT PRICE</div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          {metricBox("1H", change1h)}
+          {metricBox("15M", change15m)}
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: "1px solid rgba(255,255,255,.08)",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+              <span style={{ color: "#31efb3", fontWeight: 800, fontSize: 12 }}>S</span>
+              <strong style={{ color: "#31efb3", fontSize: 15 }}>
+                {typeof supportDistance === "number" ? `${supportDistance >= 0 ? "↑" : "↓"} ${Math.abs(supportDistance).toFixed(2)}%` : "N/A"}
+              </strong>
+            </div>
+            <div className="mono" style={{ color: "#b6c1cb", fontSize: 10, marginTop: 4 }}>{support === null ? "—" : formatPrice(support)}</div>
+          </div>
+
+          <div style={{ minWidth: 0, paddingLeft: 10, borderLeft: "1px solid rgba(255,255,255,.07)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+              <span style={{ color: "#ff6f80", fontWeight: 800, fontSize: 12 }}>R</span>
+              <strong style={{ color: "#ff6f80", fontSize: 15 }}>
+                {typeof resistanceDistance === "number" ? `${resistanceDistance >= 0 ? "↓" : "↑"} ${Math.abs(resistanceDistance).toFixed(2)}%` : "N/A"}
+              </strong>
+            </div>
+            <div className="mono" style={{ color: "#b6c1cb", fontSize: 10, marginTop: 4 }}>{resistance === null ? "—" : formatPrice(resistance)}</div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: "1px solid rgba(255,255,255,.07)",
+          }}
+        >
+          <div>
+            <div style={{ color: "#78838f", fontSize: 10 }}>FUNDING RATE</div>
+            <strong style={{ color: fundingRate !== null && fundingRate < 0 ? "#ff6f80" : "#31efb3", fontSize: 14 }}>
+              {fundingText}
+            </strong>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            {capturedAt && (
+              <span style={{ color: "#75808b", fontSize: 10 }}>
+                {new Date(capturedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+            <span
+              style={{
+                padding: "7px 14px",
+                borderRadius: 10,
+                border: `1px solid ${accent}66`,
+                color: accent,
+                background: `${direction === "LONG" ? "rgba(16,231,160,.075)" : "rgba(255,89,109,.075)"}`,
+                fontWeight: 800,
+                fontSize: 12,
+                letterSpacing: ".04em",
+              }}
+            >
+              {direction}
+            </span>
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+
 function Signals({
   user,
   onCoinClick,
@@ -693,6 +949,7 @@ function Signals({
     entryStatus: string;
     liquidity: number;
     spreadBps: number | null;
+    fundingRate: number | null;
     capturedAt: string;
     tools: Record<string, ToolResult>;
     reasons: string[];
@@ -701,6 +958,18 @@ function Signals({
     invalidation: number | null;
     riskLevel: "Low" | "Moderate" | "High" | "Extreme";
     expiresAt: string;
+  };
+
+  type HistoryMeta = {
+    change15m: number;
+    change1h: number;
+    support: number;
+    resistance: number;
+    supportDistance: number;
+    resistanceDistance: number;
+    fundingRate: number | null;
+    baseAsset: string;
+    capturedAt: string;
   };
 
   type HistoryRow = {
@@ -714,7 +983,7 @@ function Signals({
     expires_at: string | null;
     volume_spike: number | null;
     rsi: number | null;
-    tool_scores: Record<string, ToolResult> | null;
+    tool_scores: (Record<string, ToolResult> & { __meta?: HistoryMeta }) | null;
     reason: string | null;
   };
 
@@ -870,7 +1139,20 @@ function Signals({
             volume_spike:
               signal.volumeSpike,
             rsi: signal.rsi,
-            tool_scores: signal.tools,
+            tool_scores: {
+              ...signal.tools,
+              __meta: {
+                change15m: signal.change15m,
+                change1h: signal.change1h,
+                support: signal.support,
+                resistance: signal.resistance,
+                supportDistance: signal.supportDistance,
+                resistanceDistance: signal.resistanceDistance,
+                fundingRate: signal.fundingRate,
+                baseAsset: signal.baseAsset,
+                capturedAt: signal.capturedAt,
+              },
+            },
             reason: signal.reasons.join(
               " · "
             ),
@@ -1164,387 +1446,31 @@ function Signals({
 
           {!loading &&
             topRows.length > 0 && (
-              <div className="signal-grid">
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: 14,
+                }}
+              >
                 {topRows.map((signal) => (
-                  <Card
+                  <CompactSignalCard
                     key={signal.symbol}
-                    className="signal-card"
-                    onClick={() =>
-                      onCoinClick(signal.symbol)
-                    }
-                    style={{
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div className="signal-top">
-                      <div
-                        className={
-                          "badge " +
-                          (signal.direction === "LONG"
-                            ? "long"
-                            : signal.direction === "SHORT"
-                              ? "short"
-                              : "")
-                        }
-                      >
-                        {signal.direction}
-                      </div>
-
-                      <div
-                        style={{
-                          textAlign: "right",
-                        }}
-                      >
-                        <div className="score mono">
-                          {signal.score}
-                          <small>/150</small>
-                        </div>
-
-                        <div
-                          className="muted"
-                          style={{
-                            marginTop: "3px",
-                            fontSize: "9px",
-                          }}
-                        >
-                          {categoryLabel(
-                            signal.score
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <h2
-                      style={{
-                        marginTop: "10px",
-                      }}
-                    >
-                      {signal.baseAsset}
-
-                      <span
-                        className="muted"
-                        style={{
-                          marginLeft: "5px",
-                          fontSize: "11px",
-                        }}
-                      >
-                        /USDT
-                      </span>
-                    </h2>
-
-                    <div className="signal-price mono">
-                      {formatPrice(signal.price)}
-                    </div>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "7px",
-                        flexWrap: "wrap",
-                        marginBottom: "10px",
-                      }}
-                    >
-                      <span
-                        className="chip"
-                        style={{
-                          padding:
-                            "5px 7px",
-                          fontSize: "9px",
-                        }}
-                      >
-                        Score {signal.score}/150
-                      </span>
-
-                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
-                        15M {signal.change15m >= 0 ? "+" : ""}{signal.change15m.toFixed(2)}%
-                      </span>
-
-                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
-                        1H {signal.change1h >= 0 ? "+" : ""}{signal.change1h.toFixed(2)}%
-                      </span>
-
-                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
-                        Vol {signal.volumeSpike.toFixed(1)}x
-                      </span>
-
-                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
-                        {signal.entryStatus}
-                      </span>
-                    </div>
-
-                    <div className="metrics">
-                      <span>
-                        RSI
-                        <b>
-                          {signal.rsi === null
-                            ? "N/A"
-                            : signal.rsi.toFixed(
-                                1
-                              )}
-                        </b>
-                      </span>
-
-                      <span>
-                        ATR
-                        <b>
-                          {signal.atrPercent === null
-                            ? "N/A"
-                            : `${signal.atrPercent.toFixed(2)}%`}
-                        </b>
-                      </span>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: "12px",
-                        padding: "10px",
-                        borderRadius:
-                          "10px",
-                        background:
-                          "rgba(255,255,255,.025)",
-                        border:
-                          "1px solid rgba(255,255,255,.06)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          color: "#999",
-                          fontSize: "9px",
-                          textTransform:
-                            "uppercase",
-                          letterSpacing:
-                            "1px",
-                          marginBottom:
-                            "6px",
-                        }}
-                      >
-                        Why it triggered
-                      </div>
-
-                      <div
-                        style={{
-                          color: "#d2d2d2",
-                          fontSize: "11px",
-                          lineHeight:
-                            1.55,
-                        }}
-                      >
-                        {signal.reasons.join(
-                          " · "
-                        )}
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: "12px",
-                        padding: "11px",
-                        borderRadius: "10px",
-                        background: "rgba(239,35,60,.035)",
-                        border: "1px solid rgba(239,35,60,.12)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          color: "#999",
-                          fontSize: "9px",
-                          textTransform: "uppercase",
-                          letterSpacing: "1px",
-                          marginBottom: "7px",
-                        }}
-                      >
-                        Trade context · not an entry
-                      </div>
-
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                          gap: "8px",
-                        }}
-                      >
-                        <div>
-                          <span className="muted">Current</span>
-                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
-                            {formatPrice(signal.price)}
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">Risk</span>
-                          <b
-                            style={{
-                              display: "block",
-                              marginTop: "3px",
-                              color: signal.riskLevel === "Extreme" || signal.riskLevel === "High" ? "#ff6476" : signal.riskLevel === "Moderate" ? "#f3b86b" : "#65e397",
-                            }}
-                          >
-                            {signal.riskLevel}
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">Support</span>
-                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
-                            {formatPrice(signal.support)}
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">Resistance</span>
-                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
-                            {formatPrice(signal.resistance)}
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">Invalidation</span>
-                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
-                            {signal.invalidation === null ? "N/A" : formatPrice(signal.invalidation)}
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">ATR</span>
-                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
-                            {signal.atrPercent === null ? "N/A" : `${signal.atrPercent.toFixed(2)}%`}
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">15m / 1h</span>
-                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
-                            {signal.change15m >= 0 ? "+" : ""}{signal.change15m.toFixed(2)}% / {signal.change1h >= 0 ? "+" : ""}{signal.change1h.toFixed(2)}%
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">Trigger</span>
-                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
-                            {formatPrice(signal.triggerPrice)}
-                          </b>
-                        </div>
-
-                        <div>
-                          <span className="muted">Entry status</span>
-                          <b style={{ display: "block", marginTop: "3px", color: "#d8d8d8" }}>
-                            {signal.entryStatus}
-                          </b>
-                        </div>
-                      </div>
-
-                      <p
-                        className="muted"
-                        style={{ margin: "9px 0 0", lineHeight: 1.5 }}
-                      >
-                        Score measures setup alignment only. It does not create a guaranteed entry.
-                      </p>
-                    </div>
-
-                    <details
-                      style={{
-                        marginTop:
-                          "10px",
-                      }}
-                      onClick={(event: MouseEvent<HTMLDetailsElement>) =>
-                        event.stopPropagation()
-                      }
-                    >
-                      <summary
-                        style={{
-                          cursor: "pointer",
-                          color:
-                            "#999",
-                          fontSize:
-                            "10px",
-                        }}
-                      >
-                        View 15-tool breakdown
-                      </summary>
-
-                      <div
-                        style={{
-                          display:
-                            "grid",
-                          gridTemplateColumns:
-                            "1fr auto",
-                          gap: "6px 10px",
-                          marginTop:
-                            "10px",
-                          fontSize:
-                            "10px",
-                        }}
-                      >
-                        {Object.entries(
-                          signal.tools
-                        ).map(
-                          ([
-                            name,
-                            tool,
-                          ]) => (
-                            <div
-                              key={
-                                name
-                              }
-                              style={{
-                                display:
-                                  "contents",
-                              }}
-                            >
-                              <span
-                                style={{
-                                  color:
-                                    "#777",
-                                }}
-                              >
-                                {
-                                  name
-                                }
-                              </span>
-
-                              <span
-                                className="mono"
-                                style={{
-                                  color:
-                                    tool.score >=
-                                    8
-                                      ? "#65e397"
-                                      : tool.score <=
-                                          4
-                                        ? "#ff6476"
-                                        : "#bbb",
-                                }}
-                              >
-                                {
-                                  tool.score
-                                }
-                                /10
-                              </span>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    </details>
-
-                    <div className="signal-foot">
-                      <span className="muted">
-                        Captured{" "}
-                        {new Date(
-                          signal.capturedAt
-                        ).toLocaleTimeString(
-                          [],
-                          {
-                            hour:
-                              "2-digit",
-                            minute:
-                              "2-digit",
-                          }
-                        )}
-                      </span>
-
-                      <span className="dot-live" />
-                    </div>
-                  </Card>
+                    baseAsset={signal.baseAsset}
+                    direction={signal.direction === "SHORT" ? "SHORT" : "LONG"}
+                    score={signal.score}
+                    status={categoryLabel(signal.score)}
+                    price={signal.price}
+                    change15m={signal.change15m}
+                    change1h={signal.change1h}
+                    support={signal.support}
+                    resistance={signal.resistance}
+                    supportDistance={signal.supportDistance}
+                    resistanceDistance={signal.resistanceDistance}
+                    fundingRate={signal.fundingRate}
+                    capturedAt={signal.capturedAt}
+                    onClick={() => onCoinClick(signal.symbol)}
+                  />
                 ))}
               </div>
             )}
@@ -1607,250 +1533,37 @@ function Signals({
               <div
                 style={{
                   display: "grid",
-                  gap: "14px",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  gap: 14,
                 }}
               >
-                {Object.entries(
-                  historyGroups
-                ).map(
-                  ([
-                    symbol,
-                    items,
-                  ]) => (
-                    <div
-                      key={symbol}
-                      className="glass-card"
-                      style={{
-                        padding: "14px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display:
-                            "flex",
-                          alignItems:
-                            "center",
-                          justifyContent:
-                            "space-between",
-                          gap: "10px",
-                          marginBottom:
-                            "10px",
-                        }}
-                      >
-                        <div>
-                          <b>
-                            {symbol.replace(
-                              "USDT",
-                              ""
-                            )}
-                          </b>
+                {history.slice(0, 48).map((item) => {
+                  const meta = item.tool_scores?.__meta;
+                  const expired = item.expires_at
+                    ? new Date(item.expires_at).getTime() <= Date.now()
+                    : true;
 
-                          <span className="muted">
-                            {" "}
-                            /USDT ·{" "}
-                            {items.length} scan
-                            {items.length ===
-                            1
-                              ? ""
-                              : "s"}
-                          </span>
-                        </div>
-
-                        <span className="muted">
-                          Newest first
-                        </span>
-                      </div>
-
-                      <div
-                        style={{
-                          display:
-                            "flex",
-                          gap: "10px",
-                          overflowX:
-                            "auto",
-                          paddingBottom:
-                            "4px",
-                          scrollbarWidth:
-                            "thin",
-                        }}
-                      >
-                        {items.map(
-                          (item, index) => {
-                            const expired =
-                              item.expires_at
-                                ? new Date(
-                                    item.expires_at
-                                  ).getTime() <=
-                                  Date.now()
-                                : true;
-
-                            return (
-                              <button
-                                key={
-                                  item.id
-                                }
-                                type="button"
-                                onClick={() =>
-                                  onCoinClick(
-                                    item.symbol
-                                  )
-                                }
-                                style={{
-                                  flex:
-                                    "0 0 230px",
-                                  textAlign:
-                                    "left",
-                                  border:
-                                    "1px solid rgba(255,255,255,.08)",
-                                  borderRadius:
-                                    "12px",
-                                  padding:
-                                    "12px",
-                                  background:
-                                    "rgba(255,255,255,.025)",
-                                  color:
-                                    "inherit",
-                                  cursor:
-                                    "pointer",
-                                  position:
-                                    "relative",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    display:
-                                      "flex",
-                                    justifyContent:
-                                      "space-between",
-                                    gap: "8px",
-                                    alignItems:
-                                      "center",
-                                  }}
-                                >
-                                  <span
-                                    className={
-                                      "badge " +
-                                      (item.direction ===
-                                      "LONG"
-                                        ? "long"
-                                        : "short")
-                                    }
-                                  >
-                                    {
-                                      item.direction
-                                    }
-                                  </span>
-
-                                  <span className="muted">
-                                    {expired
-                                      ? "EXPIRED"
-                                      : "ACTIVE"}
-                                  </span>
-                                </div>
-
-                                <div
-                                  className="mono"
-                                  style={{
-                                    marginTop:
-                                      "12px",
-                                    fontSize:
-                                      "20px",
-                                  }}
-                                >
-                                  {
-                                    item.score
-                                  }
-                                  <span className="muted">
-                                    /150
-                                  </span>
-                                </div>
-
-                                <div
-                                  style={{
-                                    marginTop:
-                                      "5px",
-                                    color:
-                                      "#aaa",
-                                    fontSize:
-                                      "10px",
-                                  }}
-                                >
-                                  {
-                                    item.status
-                                  }
-                                </div>
-
-                                <div
-                                  style={{
-                                    marginTop:
-                                      "12px",
-                                    display:
-                                      "grid",
-                                    gap:
-                                      "5px",
-                                    fontSize:
-                                      "10px",
-                                  }}
-                                >
-                                  <span className="muted">
-                                    Price{" "}
-                                    <b
-                                      style={{
-                                        color:
-                                          "#ddd",
-                                      }}
-                                    >
-                                      {item.price ===
-                                      null
-                                        ? "—"
-                                        : formatPrice(
-                                            Number(
-                                              item.price
-                                            )
-                                          )}
-                                    </b>
-                                  </span>
-
-                                  <span className="muted">
-                                    Captured{" "}
-                                    {new Date(
-                                      item.signal_time
-                                    ).toLocaleString(
-                                      [],
-                                      {
-                                        dateStyle:
-                                          "short",
-                                        timeStyle:
-                                          "short",
-                                      }
-                                    )}
-                                  </span>
-
-                                  {item.reason && (
-                                    <span
-                                      style={{
-                                        marginTop:
-                                          "4px",
-                                        color:
-                                          "#999",
-                                        lineHeight:
-                                          1.45,
-                                      }}
-                                    >
-                                      {
-                                        item.reason
-                                      }
-                                    </span>
-                                  )}
-                                </div>
-                              </button>
-                            );
-                          }
-                        )}
-                      </div>
-                    </div>
-                  )
-                )}
+                  return (
+                    <CompactSignalCard
+                      key={item.id}
+                      baseAsset={meta?.baseAsset || item.symbol.replace("USDT", "")}
+                      direction={item.direction}
+                      score={item.score}
+                      status={item.status}
+                      price={Number(item.price ?? 0)}
+                      change15m={typeof meta?.change15m === "number" ? meta.change15m : null}
+                      change1h={typeof meta?.change1h === "number" ? meta.change1h : null}
+                      support={typeof meta?.support === "number" ? meta.support : null}
+                      resistance={typeof meta?.resistance === "number" ? meta.resistance : null}
+                      supportDistance={typeof meta?.supportDistance === "number" ? meta.supportDistance : null}
+                      resistanceDistance={typeof meta?.resistanceDistance === "number" ? meta.resistanceDistance : null}
+                      fundingRate={typeof meta?.fundingRate === "number" ? meta.fundingRate : null}
+                      capturedAt={meta?.capturedAt || item.signal_time}
+                      expired={expired}
+                      onClick={() => onCoinClick(item.symbol)}
+                    />
+                  );
+                })}
               </div>
             )}
           </Card>
