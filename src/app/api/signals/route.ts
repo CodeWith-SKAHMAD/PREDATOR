@@ -1186,6 +1186,25 @@ export async function GET() {
           );
         }
 
+        const support = lowest;
+        const resistance = highest;
+
+        const invalidation =
+          direction === "LONG" && atrValue !== null
+            ? Math.max(0, lastPrice - atrValue * 1.2)
+            : direction === "SHORT" && atrValue !== null
+              ? lastPrice + atrValue * 1.2
+              : null;
+
+        const riskLevel =
+          status === "Extended / Pumped"
+            ? "Extreme"
+            : atrPercent !== null && atrPercent >= 3
+              ? "High"
+              : atrPercent !== null && atrPercent >= 1.5
+                ? "Moderate"
+                : "Low";
+
         return {
           symbol: candidate.symbol,
           baseAsset:
@@ -1206,6 +1225,10 @@ export async function GET() {
           openInterestChange:
             oiChange,
           atrPercent,
+          support,
+          resistance,
+          invalidation,
+          riskLevel,
           liquidity:
             candidate.volume24h,
           spreadBps,
