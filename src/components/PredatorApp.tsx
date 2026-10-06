@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode, CSSProperties, ChangeEvent, MouseEvent } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
-  BarChart3, Bell, Calculator as CalculatorIcon, ChevronRight, Clock3,
+  BarChart3, Calculator as CalculatorIcon, ChevronRight, Clock3,
   LayoutDashboard, LogOut, Moon, Newspaper, PanelLeft, RefreshCw, Settings,
   Sun, Wallet, Zap
 } from "lucide-react";
@@ -3179,6 +3179,6 @@ export default function PredatorApp({ user }: { user: User }){
     `}</style>
     {navigationBusy ? <div className="predator-route-indicator" aria-hidden="true" /> : null}
     <aside className="sidebar"><div onClick={()=>navigateTo("Dashboard")} className="logo-link" role="button" tabIndex={0}><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>navigateTo(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
-    <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><button className="icon-btn" aria-label="Notifications"><Bell size={17}/></button><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className={"content predator-content-wrap "+(navigationBusy?"is-transitioning":"")}><div key={tab} className="predator-page-frame">{content}</div></div></main>{selectedSymbol ? <CoinDetails symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} /> : null}
+    <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className={"content predator-content-wrap "+(navigationBusy?"is-transitioning":"")}><div key={tab} className="predator-page-frame">{content}</div></div></main>{selectedSymbol ? <CoinDetails symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} /> : null}
   </div>
 }
