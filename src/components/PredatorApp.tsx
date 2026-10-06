@@ -40,34 +40,13 @@ type IconType = ComponentType<{
 }>;
 
 const tabs: { name: Tab; icon: IconType }[] = [
-  {
-    name: "Dashboard",
-    icon: LayoutDashboard,
-  },
-  {
-    name: "Signal",
-    icon: Zap,
-  },
-  {
-    name: "Volume Spike",
-    icon: BarChart3,
-  },
-  {
-    name: "BTC Report",
-    icon: Newspaper,
-  },
-  {
-    name: "Portfolio",
-    icon: Wallet,
-  },
-  {
-    name: "Calculator",
-    icon: CalculatorIcon,
-  },
-  {
-    name: "Settings",
-    icon: Settings,
-  },
+  { name: "Dashboard", icon: LayoutDashboard },
+  { name: "Signal", icon: Zap },
+  { name: "Volume Spike", icon: BarChart3 },
+  { name: "BTC Report", icon: Newspaper },
+  { name: "Portfolio", icon: Wallet },
+  { name: "Calculator", icon: CalculatorIcon },
+  { name: "Settings", icon: Settings },
 ];
 
 const signals = [
@@ -86,8 +65,12 @@ const spikes = [
 
 function Logo() {
   return (
-    <div className="brand" title="Home">
-      <div className="brand-mark">P</div>
+    <div className="brand" title="PREDATOR Home">
+      <img
+        src="/predator-logo.png"
+        alt="PREDATOR"
+        className="predator-logo"
+      />
       <span>PREDATOR</span>
     </div>
   );
@@ -948,7 +931,6 @@ function SettingsPage() {
 
             <label>
               Trading experience
-
               <select defaultValue="Beginner">
                 <option value="Beginner">
                   Beginner
@@ -980,18 +962,12 @@ function SettingsPage() {
           </h2>
 
           <div className="setting-row">
-            <span>
-              Theme
-            </span>
-
+            <span>Theme</span>
             <ThemeToggle />
           </div>
 
           <div className="setting-row">
-            <span>
-              Session alerts
-            </span>
-
+            <span>Session alerts</span>
             <span className="toggle" />
           </div>
 
@@ -1005,8 +981,7 @@ function SettingsPage() {
 }
 
 function ThemeToggle() {
-  const [dark, setDark] =
-    useState(true);
+  const [dark, setDark] = useState(true);
 
   useEffect(() => {
     document.documentElement.dataset.theme =
