@@ -1258,15 +1258,7 @@ function Signals({
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">
-            SCALPING SCANNER
-          </p>
-
           <h1>Live Signals</h1>
-
-          <p className="muted">
-            15 tools × 10 points · Score is not an entry.
-          </p>
         </div>
 
         <div className="actions">
@@ -1421,8 +1413,7 @@ function Signals({
                       marginTop: "6px",
                     }}
                   >
-                    The scanner only shows coins
-                    scoring 80+.
+
                   </p>
                 </div>
               )}
