@@ -78,24 +78,352 @@ function Card({children,className=""}:{children:React.ReactNode,className?:strin
   return <div className={"glass-card "+className}>{children}</div>
 }
 
+
+type MarketItem = {
+  symbol: string;
+  price: number;
+  change24h: number;
+  volume24h: number;
+  quoteVolume24h: number;
+  high24h: number;
+  low24h: number;
+};
+
+type MarketResponse = {
+  ok: boolean;
+  updatedAt?: string;
+  btc: MarketItem | null;
+  markets: MarketItem[];
+  error?: string;
+};
+
+function formatPrice(value: number) {
+  if (!Number.isFinite(value)) return "—";
+
+  if (value >= 1000) {
+    return value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
+  if (value >= 1) {
+    return value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 4,
+    });
+  }
+
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 8,
+  });
+}
+
+function formatCompactUsd(value: number) {
+  if (!Number.isFinite(value)) return "—";
+
+  if (value >= 1_000_000_000) {
+    return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  }
+
+  if (value >= 1_000_000) {
+    return `$${(value / 1_000_000).toFixed(2)}M`;
+  }
+
+  if (value >= 1_000) {
+    return `$${(value / 1_000).toFixed(2)}K`;
+  }
+
+  return `$${value.toFixed(2)}`;
+}
+
+function formatPct(value: number) {
+  if (!Number.isFinite(value)) return "—";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function marketTone(change: number) {
+  if (change >= 0.5) return "up";
+  if (change <= -0.5) return "down";
+  return "neutral";
+}
+
 function Dashboard({go}:{go:(t:Tab)=>void}) {
-  return <div className="page">
-    <div className="page-head"><div><p className="eyebrow">OVERVIEW</p><h1>Dashboard</h1><p className="muted">Market intelligence at a glance.</p></div><button className="glass-btn"><RefreshCw size={15}/> Live</button></div>
-    <div className="stats-grid">
-      <Card><span className="label">BTC</span><strong className="price">$121,840</strong><span className="up">+2.84%</span><div className="mini-line"/></Card>
-      <Card><span className="label">MARKET STATUS</span><strong>Risk-On</strong><span className="up">Bullish structure</span><div className="status-dot"/></Card>
-      <Card><span className="label">ACTIVE SIGNALS</span><strong>12</strong><span className="muted">4 Strong · 5 Valid</span></Card>
-      <Card><span className="label">VOLUME</span><strong>High</strong><span className="muted">+38% vs average</span></Card>
+  const [market, setMarket] = useState<MarketResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
+
+  async function loadMarket(isManual = false) {
+    if (isManual) setRefreshing(true);
+
+    try {
+      const response = await fetch("/api/market", {
+        cache: "no-store",
+      });
+
+      const data = (await response.json()) as MarketResponse;
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "Market data unavailable");
+      }
+
+      setMarket(data);
+      setLastUpdated(
+        data.updatedAt
+          ? new Date(data.updatedAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+            })
+          : ""
+      );
+    } catch {
+      setMarket(null);
+      setLastUpdated("");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    loadMarket();
+
+    const timer = window.setInterval(() => {
+      loadMarket();
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const btc = market?.btc ?? null;
+  const movers = market?.markets?.slice(0, 5) ?? [];
+
+  const marketStatus =
+    btc == null
+      ? "Unavailable"
+      : btc.change24h >= 1.5
+        ? "Risk-On"
+        : btc.change24h <= -1.5
+          ? "Risk-Off"
+          : "Balanced";
+
+  const marketStatusText =
+    btc == null
+      ? "Waiting for market data"
+      : `BTC 24H ${formatPct(btc.change24h)}`;
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">OVERVIEW</p>
+          <h1>Dashboard</h1>
+          <p className="muted">
+            Live market overview
+            {lastUpdated ? ` · Updated ${lastUpdated}` : ""}
+          </p>
+        </div>
+
+        <button
+          className="glass-btn"
+          onClick={() => loadMarket(true)}
+          disabled={refreshing}
+        >
+          <RefreshCw
+            size={15}
+            className={refreshing ? "spin" : ""}
+          />
+          {refreshing ? "Refreshing" : "Refresh"}
+        </button>
+      </div>
+
+      <div className="stats-grid">
+        <Card>
+          <span className="label">BTC</span>
+
+          <strong className="price">
+            {loading || !btc
+              ? "—"
+              : `$${formatPrice(btc.price)}`}
+          </strong>
+
+          <span
+            className={
+              btc && marketTone(btc.change24h) === "up"
+                ? "up"
+                : btc && marketTone(btc.change24h) === "down"
+                  ? "muted"
+                  : "muted"
+            }
+          >
+            {loading || !btc ? "Loading..." : formatPct(btc.change24h)}
+          </span>
+
+          {btc && (
+            <div className="mini-line" />
+          )}
+        </Card>
+
+        <Card>
+          <span className="label">MARKET STATUS</span>
+
+          <strong>{marketStatus}</strong>
+
+          <span className="muted">
+            {marketStatusText}
+          </span>
+
+          <div className="status-dot" />
+        </Card>
+
+        <Card>
+          <span className="label">ACTIVE SIGNALS</span>
+
+          <strong>—</strong>
+
+          <span className="muted">
+            Scanner engine comes next
+          </span>
+        </Card>
+
+        <Card>
+          <span className="label">TOP VOLUME</span>
+
+          <strong>
+            {loading || !movers[0]
+              ? "—"
+              : formatCompactUsd(
+                  movers[0].quoteVolume24h
+                )}
+          </strong>
+
+          <span className="muted">
+            {movers[0]
+              ? `${movers[0].symbol.replace("USDT", "")} 24H quote volume`
+              : "Waiting for market data"}
+          </span>
+        </Card>
+      </div>
+
+      <div className="two-col">
+        <Card>
+          <div className="card-head">
+            <div>
+              <span className="label">MARKET MOVERS</span>
+              <h2>Highest activity</h2>
+            </div>
+
+            <button
+              className="text-btn"
+              onClick={() => go("Volume Spike")}
+            >
+              View all
+              <ChevronRight size={14} />
+            </button>
+          </div>
+
+          {loading && (
+            <div className="row">
+              <span className="muted">Loading live markets...</span>
+            </div>
+          )}
+
+          {!loading && movers.length === 0 && (
+            <div className="row">
+              <span className="muted">
+                Market data is temporarily unavailable.
+              </span>
+            </div>
+          )}
+
+          {!loading &&
+            movers.map((item) => {
+              const symbol = item.symbol.replace("USDT", "");
+              const changeClass =
+                marketTone(item.change24h) === "up"
+                  ? "up"
+                  : marketTone(item.change24h) === "down"
+                    ? "muted"
+                    : "muted";
+
+              return (
+                <div className="row" key={item.symbol}>
+                  <div>
+                    <b>{symbol}</b>
+                    <span className="muted">
+                      ${formatPrice(item.price)}
+                    </span>
+                  </div>
+
+                  <span className={changeClass}>
+                    {formatPct(item.change24h)}
+                  </span>
+
+                  <span className="mono">
+                    {formatCompactUsd(item.quoteVolume24h)}
+                  </span>
+                </div>
+              );
+            })}
+        </Card>
+
+        <Card>
+          <div className="card-head">
+            <div>
+              <span className="label">LIVE MARKET SNAPSHOT</span>
+              <h2>BTC range</h2>
+            </div>
+
+            <button
+              className="text-btn"
+              onClick={() => go("BTC Report")}
+            >
+              Report
+              <ChevronRight size={14} />
+            </button>
+          </div>
+
+          <div className="row">
+            <div>
+              <b>24H High</b>
+              <span className="muted">Current market</span>
+            </div>
+
+            <strong className="mono">
+              {btc ? `$${formatPrice(btc.high24h)}` : "—"}
+            </strong>
+          </div>
+
+          <div className="row">
+            <div>
+              <b>24H Low</b>
+              <span className="muted">Current market</span>
+            </div>
+
+            <strong className="mono">
+              {btc ? `$${formatPrice(btc.low24h)}` : "—"}
+            </strong>
+          </div>
+
+          <div className="row">
+            <div>
+              <b>24H Volume</b>
+              <span className="muted">Quote volume</span>
+            </div>
+
+            <strong className="mono">
+              {btc
+                ? formatCompactUsd(btc.quoteVolume24h)
+                : "—"}
+            </strong>
+          </div>
+        </Card>
+      </div>
     </div>
-    <div className="two-col">
-      <Card><div className="card-head"><div><span className="label">MARKET MOVERS</span><h2>Top movement</h2></div><button className="text-btn" onClick={()=>go("Volume Spike")}>View all <ChevronRight size={14}/></button></div>
-        {spikes.map((x,i)=><div className="row" key={i}><div><b>{x[0]}</b><span className="muted">{x[5]} activity</span></div><span className="up">+{i+2}.4%</span><span className="mono">{x[1]}</span></div>)}
-      </Card>
-      <Card><div className="card-head"><div><span className="label">SIGNAL SUMMARY</span><h2>Latest scanner</h2></div><button className="text-btn" onClick={()=>go("Signal")}>Open <ChevronRight size={14}/></button></div>
-        {signals.slice(0,3).map((s,i)=><div className="signal-row" key={i}><div className={"badge "+(s[1]==="LONG"?"long":"short")}>{s[1]}</div><div><b>{s[0]}</b><span className="muted">{s[3]}</span></div><strong className="mono">{s[2]}/150</strong></div>)}
-      </Card>
-    </div>
-  </div>
+  );
 }
 
 function Signals() {
