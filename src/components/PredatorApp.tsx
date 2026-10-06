@@ -1,7 +1,7 @@
  "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { ComponentType, ReactNode, CSSProperties } from "react";
+import type { ComponentType, ReactNode, CSSProperties, ChangeEvent, MouseEvent } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
   BarChart3, Bell, Calculator as CalculatorIcon, ChevronRight, Clock3,
@@ -475,7 +475,6 @@ function Signals({
     reasons: string[];
     support: number;
     resistance: number;
-    atrPercent: number | null;
     invalidation: number | null;
     riskLevel: "Low" | "Moderate" | "High" | "Extreme";
   };
@@ -606,7 +605,7 @@ function Signals({
 
       const activeSymbols = new Set(
         (activeRows ?? []).map(
-          (item) => item.symbol
+          (item: { symbol: string }) => item.symbol
         )
       );
 
@@ -1218,7 +1217,7 @@ function Signals({
                         marginTop:
                           "10px",
                       }}
-                      onClick={(event) =>
+                      onClick={(event: MouseEvent<HTMLDetailsElement>) =>
                         event.stopPropagation()
                       }
                     >
@@ -1833,9 +1832,9 @@ function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
 
 function BTCReport(){return <div className="page"><div className="page-head"><div><p className="eyebrow">INTELLIGENCE CENTER</p><h1>BTC Report</h1><p className="muted">Market health, structure, cycle and key takeaways.</p></div></div><div className="stats-grid"><Card><span className="label">MARKET HEALTH</span><strong>82 / 100</strong><span className="up">Healthy</span></Card><Card><span className="label">MARKET CONDITION</span><strong>Bullish</strong><span className="muted">Trend aligned</span></Card><Card><span className="label">CYCLE SCORE</span><strong>74</strong><span className="muted">Expansion</span></Card><Card><span className="label">CYCLE STAGE</span><strong>Markup</strong><span className="muted">Watch resistance</span></Card></div><Card><div className="report-grid"><div><span className="label">SUPPORT</span><h2>$118,400</h2></div><div><span className="label">RESISTANCE</span><h2>$124,900</h2></div><div><span className="label">KEY TAKEAWAYS</span><p className="muted">Structure remains constructive. Confirm strength with volume and derivatives context before acting.</p></div></div></Card></div>}
 
-function Portfolio(){const [qty,setQty]=useState(1); const [entry,setEntry]=useState(100); return <div className="page"><div className="page-head"><div><p className="eyebrow">INVESTMENTS</p><h1>Portfolio</h1><p className="muted">Track holdings, plan and live P&amp;L.</p></div><button className="glass-btn">+ Add trade</button></div><div className="stats-grid"><Card><span className="label">INVESTED</span><strong>${(qty*entry).toFixed(2)}</strong></Card><Card><span className="label">CURRENT VALUE</span><strong>$128.40</strong><span className="up">+28.40%</span></Card><Card><span className="label">TOTAL P&amp;L</span><strong className="up">+$28.40</strong></Card><Card><span className="label">COINS</span><strong>1</strong></Card></div><Card><div className="card-head"><div><span className="label">HOLDINGS</span><h2>Position tracker</h2></div></div><div className="form-grid"><label>Coin<input defaultValue="BTC"/></label><label>Quantity<input type="number" value={qty} onChange={e=>setQty(Number(e.target.value)||0)}/></label><label>Entry price<input type="number" value={entry} onChange={e=>setEntry(Number(e.target.value)||0)}/></label><label>Plan<input placeholder="Long-term / scalp"/></label></div></Card></div>}
+function Portfolio(){const [qty,setQty]=useState(1); const [entry,setEntry]=useState(100); return <div className="page"><div className="page-head"><div><p className="eyebrow">INVESTMENTS</p><h1>Portfolio</h1><p className="muted">Track holdings, plan and live P&amp;L.</p></div><button className="glass-btn">+ Add trade</button></div><div className="stats-grid"><Card><span className="label">INVESTED</span><strong>${(qty*entry).toFixed(2)}</strong></Card><Card><span className="label">CURRENT VALUE</span><strong>$128.40</strong><span className="up">+28.40%</span></Card><Card><span className="label">TOTAL P&amp;L</span><strong className="up">+$28.40</strong></Card><Card><span className="label">COINS</span><strong>1</strong></Card></div><Card><div className="card-head"><div><span className="label">HOLDINGS</span><h2>Position tracker</h2></div></div><div className="form-grid"><label>Coin<input defaultValue="BTC"/></label><label>Quantity<input type="number" value={qty} onChange={(e: ChangeEvent<HTMLInputElement>)=>setQty(Number(e.target.value)||0)}/></label><label>Entry price<input type="number" value={entry} onChange={(e: ChangeEvent<HTMLInputElement>)=>setEntry(Number(e.target.value)||0)}/></label><label>Plan<input placeholder="Long-term / scalp"/></label></div></Card></div>}
 
-function CalculatorPage(){const [a,setA]=useState(100);const [p,setP]=useState(10);const [from,setFrom]=useState("EUR");const [to,setTo]=useState("USD");return <div className="page"><div className="page-head"><div><p className="eyebrow">TOOLS</p><h1>Calculator</h1><p className="muted">Quick trading and currency utilities.</p></div></div><div className="two-col"><Card><span className="label">PERCENTAGE</span><h2>Percentage calculator</h2><div className="form-grid"><label>Main data<input type="number" value={a} onChange={e=>setA(Number(e.target.value))}/></label><label>% input<input type="number" value={p} onChange={e=>setP(Number(e.target.value))}/></label></div><div className="result mono">{(a*p/100).toFixed(2)}</div></Card><Card><span className="label">CURRENCY</span><h2>Converter</h2><div className="form-grid"><label>Amount<input defaultValue="100"/></label><label>From<select value={from} onChange={e=>setFrom(e.target.value)}><option>EUR</option><option>USD</option><option>BDT</option></select></label><label>To<select value={to} onChange={e=>setTo(e.target.value)}><option>USD</option><option>EUR</option><option>BDT</option></select></label></div><p className="muted">Live rates will be connected in the data integration phase.</p></Card></div></div>}
+function CalculatorPage(){const [a,setA]=useState(100);const [p,setP]=useState(10);const [from,setFrom]=useState("EUR");const [to,setTo]=useState("USD");return <div className="page"><div className="page-head"><div><p className="eyebrow">TOOLS</p><h1>Calculator</h1><p className="muted">Quick trading and currency utilities.</p></div></div><div className="two-col"><Card><span className="label">PERCENTAGE</span><h2>Percentage calculator</h2><div className="form-grid"><label>Main data<input type="number" value={a} onChange={(e: ChangeEvent<HTMLInputElement>)=>setA(Number(e.target.value))}/></label><label>% input<input type="number" value={p} onChange={(e: ChangeEvent<HTMLInputElement>)=>setP(Number(e.target.value))}/></label></div><div className="result mono">{(a*p/100).toFixed(2)}</div></Card><Card><span className="label">CURRENCY</span><h2>Converter</h2><div className="form-grid"><label>Amount<input defaultValue="100"/></label><label>From<select value={from} onChange={(e: ChangeEvent<HTMLSelectElement>)=>setFrom(e.target.value)}><option>EUR</option><option>USD</option><option>BDT</option></select></label><label>To<select value={to} onChange={(e: ChangeEvent<HTMLSelectElement>)=>setTo(e.target.value)}><option>USD</option><option>EUR</option><option>BDT</option></select></label></div><p className="muted">Live rates will be connected in the data integration phase.</p></Card></div></div>}
 
 
 function CoinDetails({ symbol, onClose }: { symbol: string; onClose: () => void }) {
@@ -2029,7 +2028,7 @@ function SettingsPage({
               Name
               <input
                 value={name}
-                onChange={(event) =>
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
                   setName(event.target.value)
                 }
                 disabled={loading || saving}
@@ -2061,7 +2060,7 @@ function SettingsPage({
               Trading experience
               <select
                 value={experience}
-                onChange={(event) =>
+                onChange={(event: ChangeEvent<HTMLSelectElement>) =>
                   setExperience(event.target.value)
                 }
                 disabled={loading || saving}
