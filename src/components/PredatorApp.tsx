@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Bell, Calculator, ChevronRight, CircleUserRound, Clock3,
+  BarChart3, Bell, Calculator as CalculatorIcon, ChevronRight, CircleUserRound, Clock3,
   LayoutDashboard, Moon, Newspaper, PanelLeft, RefreshCw, Settings,
   Shield, Sun, TrendingUp, Wallet, Zap
 } from "lucide-react";
@@ -15,7 +15,7 @@ const tabs: {name: Tab; icon: React.ComponentType<{size?:number; strokeWidth?:nu
   {name:"Volume Spike",icon:BarChart3},
   {name:"BTC Report",icon:Newspaper},
   {name:"Portfolio",icon:Wallet},
-  {name:"Calculator",icon:Calculator},
+  {name:"Calculator",icon:CalculatorIcon},
   {name:"Settings",icon:Settings},
 ];
 
