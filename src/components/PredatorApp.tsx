@@ -1187,48 +1187,32 @@ function Signals({
     scanBusyRef.current = true;
     try {
       setError("");
-
-      const currentWindowId = Math.floor(Date.now() / (30 * 60 * 1000));
-      if (mode !== "auto" && typeof window !== "undefined") {
-        try {
-          const cached = JSON.parse(window.sessionStorage.getItem("predator-signal-snapshot-v2") || "null") as SignalSnapshot | null;
-          if (cached && cached.windowId === currentWindowId && Array.isArray(cached.rows)) {
-            setRows(cached.rows);
-            setLast(new Date(cached.windowStartAt));
-            const cachedNext = Date.parse(cached.nextScanAt);
-            setNextScanAt(Number.isFinite(cachedNext) ? cachedNext : null);
-            if (Number.isFinite(cachedNext)) setSeconds(Math.max(0, Math.ceil((cachedNext - Date.now()) / 1000)));
-            setLoading(false);
-            await saveNewSignals(cached.rows);
-            return;
-          }
-        } catch {}
+      if (mode === "auto" || mode === "initial" || mode === "manual") {
+        setLoading(mode === "auto" ? false : true);
       }
 
-      if (mode === "auto" || mode === "initial" || mode === "manual") setLoading(mode === "auto" ? false : true);
+      // IMPORTANT: do not use browser/sessionStorage as the signal source.
+      // The API now returns one shared Supabase-backed snapshot for everyone.
+      // This guarantees PC/mobile/different accounts see identical results
+      // during the same 30-minute scan window.
       const response = await fetch(`/api/signals?ts=${Date.now()}`, { cache: "no-store" });
       const payload = await response.json();
 
       if (!response.ok || !payload.ok) throw new Error(payload.error || "Signal scan failed");
 
       const nextRows = (payload.rows ?? []) as SignalRow[];
-      const serverNextScan = Number.isFinite(Date.parse(payload.nextScanAt || "")) ? Date.parse(payload.nextScanAt) : null;
-      const serverWindowStart = Number.isFinite(Date.parse(payload.windowStartAt || "")) ? Date.parse(payload.windowStartAt) : Date.now();
+      const serverNextScan = Number.isFinite(Date.parse(payload.nextScanAt || ""))
+        ? Date.parse(payload.nextScanAt)
+        : null;
+      const serverWindowStart = Number.isFinite(Date.parse(payload.windowStartAt || ""))
+        ? Date.parse(payload.windowStartAt)
+        : Date.now();
 
       setRows(nextRows);
       setLast(new Date(serverWindowStart));
       setNextScanAt(serverNextScan);
-      if (serverNextScan !== null) setSeconds(Math.max(0, Math.ceil((serverNextScan - Date.now()) / 1000)));
-
-      if (typeof window !== "undefined" && serverNextScan !== null) {
-        const snapshot: SignalSnapshot = {
-          windowId: Math.floor(serverWindowStart / (30 * 60 * 1000)),
-          windowStartAt: new Date(serverWindowStart).toISOString(),
-          nextScanAt: new Date(serverNextScan).toISOString(),
-          updatedAt: payload.updatedAt || new Date().toISOString(),
-          rows: nextRows,
-        };
-        try { window.sessionStorage.setItem("predator-signal-snapshot-v2", JSON.stringify(snapshot)); } catch {}
+      if (serverNextScan !== null) {
+        setSeconds(Math.max(0, Math.ceil((serverNextScan - Date.now()) / 1000)));
       }
 
       await saveNewSignals(nextRows);
