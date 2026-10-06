@@ -463,11 +463,20 @@ function Signals({
     status: string;
     price: number;
     priceChange24h: number;
+    triggerPrice: number;
+    change15m: number;
+    change1h: number;
     volumeSpike: number;
+    incomingVolume: number;
     rsi: number | null;
     funding: number | null;
+    openInterest: number | null;
+    openInterestUsd: number | null;
     openInterestChange: number | null;
     atrPercent: number | null;
+    supportDistance: number;
+    resistanceDistance: number;
+    entryStatus: string;
     liquidity: number;
     spreadBps: number | null;
     capturedAt: string;
@@ -1007,38 +1016,20 @@ function Signals({
                         Score {signal.score}/150
                       </span>
 
-                      <span
-                        className="chip"
-                        style={{
-                          padding:
-                            "5px 7px",
-                          fontSize: "9px",
-                        }}
-                      >
-                        24H{" "}
-                        {signal.priceChange24h >=
-                        0
-                          ? "+"
-                          : ""}
-                        {signal.priceChange24h.toFixed(
-                          2
-                        )}
-                        %
+                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
+                        15M {signal.change15m >= 0 ? "+" : ""}{signal.change15m.toFixed(2)}%
                       </span>
 
-                      <span
-                        className="chip"
-                        style={{
-                          padding:
-                            "5px 7px",
-                          fontSize: "9px",
-                        }}
-                      >
-                        Vol{" "}
-                        {signal.volumeSpike.toFixed(
-                          1
-                        )}
-                        x
+                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
+                        1H {signal.change1h >= 0 ? "+" : ""}{signal.change1h.toFixed(2)}%
+                      </span>
+
+                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
+                        Vol {signal.volumeSpike.toFixed(1)}x
+                      </span>
+
+                      <span className="chip" style={{ padding: "5px 7px", fontSize: "9px" }}>
+                        {signal.entryStatus}
                       </span>
                     </div>
 
@@ -1069,19 +1060,11 @@ function Signals({
                       </span>
 
                       <span>
-                        OI
+                        OI Change
                         <b>
-                          {signal.openInterestChange ===
-                          null
+                          {signal.openInterestChange === null
                             ? "N/A"
-                            : `${
-                                signal.openInterestChange >=
-                                0
-                                  ? "+"
-                                  : ""
-                              }${signal.openInterestChange.toFixed(
-                                1
-                              )}%`}
+                            : `${signal.openInterestChange >= 0 ? "+" : ""}${signal.openInterestChange.toFixed(1)}%`}
                         </b>
                       </span>
                     </div>
@@ -1200,6 +1183,27 @@ function Signals({
                           <span className="muted">ATR</span>
                           <b className="mono" style={{ display: "block", marginTop: "3px" }}>
                             {signal.atrPercent === null ? "N/A" : `${signal.atrPercent.toFixed(2)}%`}
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">15m / 1h</span>
+                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
+                            {signal.change15m >= 0 ? "+" : ""}{signal.change15m.toFixed(2)}% / {signal.change1h >= 0 ? "+" : ""}{signal.change1h.toFixed(2)}%
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">Trigger</span>
+                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
+                            {formatPrice(signal.triggerPrice)}
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">Entry status</span>
+                          <b style={{ display: "block", marginTop: "3px", color: "#d8d8d8" }}>
+                            {signal.entryStatus}
                           </b>
                         </div>
                       </div>
