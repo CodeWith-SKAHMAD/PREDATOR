@@ -5,7 +5,7 @@ export const revalidate = 0;
 
 const SPOT_BASES = [
   "https://data-api.binance.vision",
-  "https://api-gcp.binance.com",
+  "https://api.binance.com",
   "https://api1.binance.com",
   "https://api2.binance.com",
   "https://api3.binance.com",
@@ -71,10 +71,16 @@ type FundingRow = {
   fundingRate: string;
 };
 
-type OiRow = {
+type OiHistoryRow = {
   symbol: string;
-  sumOpenInterestValue: string;
+  sumOpenInterest?: string;
+  sumOpenInterestValue?: string;
   timestamp: number;
+};
+
+type OiCurrentRow = {
+  symbol: string;
+  openInterest: string;
 };
 
 type Candle = {
@@ -88,9 +94,18 @@ type Candle = {
 };
 
 type Bias = "LONG" | "SHORT" | "NEUTRAL";
+type EntryStatus =
+  | "OBSERVE"
+  | "VALID ENTRY ZONE"
+  | "WAIT RETEST"
+  | "BREAKOUT"
+  | "RETEST"
+  | "EXTENDED"
+  | "PUMPED"
+  | "NO TRADE";
 
 type ToolResult = {
-  score: number;
+  score: 0 | 10;
   label: string;
   bias: Bias;
 };
@@ -101,15 +116,24 @@ type SignalRow = {
   direction: "LONG" | "SHORT" | "NEUTRAL";
   score: number;
   status: string;
+  entryStatus: EntryStatus;
   price: number;
+  triggerPrice: number;
   priceChange24h: number;
+  change15m: number;
+  change1h: number;
   volumeSpike: number;
+  incomingVolume: number;
   rsi: number | null;
   funding: number | null;
+  openInterest: number | null;
+  openInterestUsd: number | null;
   openInterestChange: number | null;
   atrPercent: number | null;
   support: number;
+  supportDistance: number;
   resistance: number;
+  resistanceDistance: number;
   invalidation: number | null;
   riskLevel: "Low" | "Moderate" | "High" | "Extreme";
   liquidity: number;
@@ -133,11 +157,7 @@ type ScanCache = {
 
 let scanCache: ScanCache | null = null;
 
-async function fetchJson<T>(
-  bases: string[],
-  path: string,
-  timeoutMs = 7000,
-): Promise<T> {
+async function fetchJson<T>(bases: string[], path: string, timeoutMs = 6500): Promise<T> {
   let lastError = "Market data request failed";
 
   for (const base of bases) {
@@ -158,8 +178,7 @@ async function fetchJson<T>(
 
       return (await response.json()) as T;
     } catch (error) {
-      lastError =
-        error instanceof Error ? error.message : "Market data request failed";
+      lastError = error instanceof Error ? error.message : "Market data request failed";
     } finally {
       clearTimeout(timeout);
     }
@@ -178,6 +197,7 @@ async function safeFetch<T>(bases: string[], path: string): Promise<T | null> {
 
 function toClosedCandles(rows: Kline[]): Candle[] {
   const now = Date.now();
+
   return rows
     .filter((row) => Number(row[6]) <= now)
     .map((row) => ({
@@ -189,13 +209,10 @@ function toClosedCandles(rows: Kline[]): Candle[] {
       volume: Number(row[5]),
       quoteVolume: Number(row[7]),
     }))
-    .filter(
-      (row) =>
-        Number.isFinite(row.close) &&
-        Number.isFinite(row.high) &&
-        Number.isFinite(row.low) &&
-        Number.isFinite(row.volume) &&
-        Number.isFinite(row.quoteVolume),
+    .filter((row) =>
+      [row.high, row.low, row.close, row.volume, row.quoteVolume].every(
+        (value) => Number.isFinite(value),
+      ),
     );
 }
 
@@ -207,7 +224,7 @@ function ema(values: number[], period: number): number {
   let value = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
 
   for (let i = period; i < values.length; i += 1) {
-    value = value + (values[i] - value) * multiplier;
+    value += (values[i] - value) * multiplier;
   }
 
   return value;
@@ -241,9 +258,7 @@ function rsi(values: number[], period = 14): number | null {
 }
 
 function macd(values: number[]) {
-  if (values.length < 35) {
-    return { line: 0, signal: 0, histogram: 0 };
-  }
+  if (values.length < 35) return { line: 0, signal: 0, histogram: 0 };
 
   const lineSeries: number[] = [];
 
@@ -256,11 +271,7 @@ function macd(values: number[]) {
   const line = lineSeries[lineSeries.length - 1] ?? 0;
   const signal = ema(lineSeries.slice(-9), 9);
 
-  return {
-    line,
-    signal,
-    histogram: line - signal,
-  };
+  return { line, signal, histogram: line - signal };
 }
 
 function atr(candles: Candle[], period = 14): number | null {
@@ -327,22 +338,15 @@ function adx(candles: Candle[], period = 14): number | null {
     );
   }
 
-  let plus = plusDm.slice(-period).reduce((a, b) => a + b, 0) / period;
-  let minus = minusDm.slice(-period).reduce((a, b) => a + b, 0) / period;
-  let trAvg = tr.slice(-period).reduce((a, b) => a + b, 0) / period;
-
-  if (trAvg <= 0) return 0;
-
-  let dxValues: number[] = [];
+  let trAvg = tr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let plus = plusDm.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let minus = minusDm.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  const dxValues: number[] = [];
 
   for (let i = period; i < tr.length; i += 1) {
-    const trValue = tr[i];
-    const plusValue = plusDm[i];
-    const minusValue = minusDm[i];
-
-    trAvg = (trAvg * (period - 1) + trValue) / period;
-    plus = (plus * (period - 1) + plusValue) / period;
-    minus = (minus * (period - 1) + minusValue) / period;
+    trAvg = (trAvg * (period - 1) + tr[i]) / period;
+    plus = (plus * (period - 1) + plusDm[i]) / period;
+    minus = (minus * (period - 1) + minusDm[i]) / period;
 
     if (trAvg <= 0) continue;
 
@@ -356,99 +360,62 @@ function adx(candles: Candle[], period = 14): number | null {
   }
 
   if (!dxValues.length) return null;
-
-  return dxValues.slice(-period).reduce((a, b) => a + b, 0) /
-    Math.min(period, dxValues.length);
+  return dxValues.slice(-period).reduce((a, b) => a + b, 0) / Math.min(period, dxValues.length);
 }
 
-function scoreDirection(bullish: boolean, bearish: boolean, strength = 1): ToolResult {
-  if (bullish && !bearish) {
-    return { score: Math.max(6, Math.min(10, Math.round(5 + 5 * strength))), label: "Bullish", bias: "LONG" };
-  }
-
-  if (bearish && !bullish) {
-    return { score: Math.max(6, Math.min(10, Math.round(5 + 5 * strength))), label: "Bearish", bias: "SHORT" };
-  }
-
-  return { score: 5, label: "Neutral", bias: "NEUTRAL" };
+function tool(score: 0 | 10, label: string, bias: Bias): ToolResult {
+  return { score, label, bias };
 }
 
-function scoreVolume(spike: number, priceChange: number): ToolResult {
-  if (spike >= 2) {
-    return {
-      score: 10,
-      label: `${spike.toFixed(1)}x spike`,
-      bias: priceChange > 0 ? "LONG" : priceChange < 0 ? "SHORT" : "NEUTRAL",
-    };
-  }
-
-  if (spike >= 1.5) {
-    return {
-      score: 8,
-      label: `${spike.toFixed(1)}x elevated`,
-      bias: priceChange > 0 ? "LONG" : priceChange < 0 ? "SHORT" : "NEUTRAL",
-    };
-  }
-
-  if (spike >= 1.2) {
-    return {
-      score: 6,
-      label: `${spike.toFixed(1)}x active`,
-      bias: priceChange > 0 ? "LONG" : priceChange < 0 ? "SHORT" : "NEUTRAL",
-    };
-  }
-
-  return { score: 5, label: `${spike.toFixed(1)}x normal`, bias: "NEUTRAL" };
+function binaryDirection(longCondition: boolean, shortCondition: boolean, longLabel: string, shortLabel: string): ToolResult {
+  if (longCondition && !shortCondition) return tool(10, longLabel, "LONG");
+  if (shortCondition && !longCondition) return tool(10, shortLabel, "SHORT");
+  return tool(0, "No clear confirmation", "NEUTRAL");
 }
 
-function scoreRsi(value: number | null): ToolResult {
-  if (value === null) return { score: 5, label: "N/A", bias: "NEUTRAL" };
-  if (value >= 55 && value <= 68) return { score: 9, label: "Bullish zone", bias: "LONG" };
-  if (value >= 70) return { score: 6, label: "Overbought", bias: "SHORT" };
-  if (value <= 30) return { score: 6, label: "Oversold", bias: "LONG" };
-  if (value <= 45) return { score: 7, label: "Weak", bias: "SHORT" };
-  return { score: 6, label: "Neutral", bias: "NEUTRAL" };
+function volumeTool(spike: number, change: number): ToolResult {
+  if (spike >= 1.5 && change > 0) return tool(10, `${spike.toFixed(1)}× bullish participation`, "LONG");
+  if (spike >= 1.5 && change < 0) return tool(10, `${spike.toFixed(1)}× bearish participation`, "SHORT");
+  return tool(0, `${spike.toFixed(1)}× volume`, "NEUTRAL");
 }
 
-function scoreLiquidity(volume24h: number, spreadBps: number | null): ToolResult {
-  let score = 5;
+function rsiTool(value: number | null): ToolResult {
+  if (value === null) return tool(0, "RSI unavailable", "NEUTRAL");
+  if (value >= 50 && value <= 68) return tool(10, `Bullish RSI ${value.toFixed(1)}`, "LONG");
+  if (value >= 32 && value < 50) return tool(10, `Bearish RSI ${value.toFixed(1)}`, "SHORT");
+  return tool(0, `RSI ${value.toFixed(1)} outside setup zone`, "NEUTRAL");
+}
 
-  if (volume24h >= 500_000_000) score = 10;
-  else if (volume24h >= 250_000_000) score = 9;
-  else if (volume24h >= 100_000_000) score = 8;
-  else if (volume24h >= 50_000_000) score = 7;
-  else if (volume24h >= 20_000_000) score = 6;
-  else if (volume24h < 5_000_000) score = 3;
+function fundingTool(value: number | null): ToolResult {
+  if (value === null) return tool(0, "Funding unavailable", "NEUTRAL");
 
-  if (spreadBps !== null) {
-    if (spreadBps > 12) score = Math.max(1, score - 2);
-    else if (spreadBps > 6) score = Math.max(1, score - 1);
+  const pct = value * 100;
+  if (pct <= -0.03) return tool(10, `Negative funding ${pct.toFixed(3)}%`, "LONG");
+  if (pct >= 0.03) return tool(10, `Positive funding ${pct.toFixed(3)}%`, "SHORT");
+  return tool(0, `Neutral funding ${pct.toFixed(3)}%`, "NEUTRAL");
+}
+
+function liquidityTool(volume24h: number, spreadBps: number | null): ToolResult {
+  const volumeOk = volume24h >= 50_000_000;
+  const spreadOk = spreadBps === null || spreadBps <= 8;
+  if (volumeOk && spreadOk) {
+    return tool(10, spreadBps === null ? "High liquidity" : `Liquidity ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
   }
-
-  return {
-    score,
-    label: spreadBps === null ? "Liquid" : `${spreadBps.toFixed(1)} bps`,
-    bias: "NEUTRAL",
-  };
+  return tool(0, spreadBps === null ? "Liquidity filter failed" : `Wide spread ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
 }
 
-function scoreAtr(atrPercent: number | null): ToolResult {
-  if (atrPercent === null) return { score: 5, label: "N/A", bias: "NEUTRAL" };
-  if (atrPercent >= 0.25 && atrPercent <= 2.5) return { score: 9, label: "Healthy", bias: "NEUTRAL" };
-  if (atrPercent < 0.1) return { score: 4, label: "Too quiet", bias: "NEUTRAL" };
-  if (atrPercent > 3) return { score: 4, label: "Too volatile", bias: "NEUTRAL" };
-  return { score: 6, label: "Moderate", bias: "NEUTRAL" };
+function atrTool(atrPercent: number | null): ToolResult {
+  if (atrPercent === null) return tool(0, "ATR unavailable", "NEUTRAL");
+  if (atrPercent >= 0.15 && atrPercent <= 2.5) return tool(10, `Healthy ATR ${atrPercent.toFixed(2)}%`, "NEUTRAL");
+  return tool(0, `ATR ${atrPercent.toFixed(2)}% outside range`, "NEUTRAL");
 }
 
-function scoreFunding(value: number | null): ToolResult {
-  if (value === null) return { score: 5, label: "N/A", bias: "NEUTRAL" };
+function oiTool(oiChange: number | null, priceChange: number, ema21: number, price: number): ToolResult {
+  if (oiChange === null) return tool(0, "OI change unavailable", "NEUTRAL");
 
-  const percent = value * 100;
-  if (percent >= 0.1) return { score: 8, label: "Crowded long", bias: "SHORT" };
-  if (percent >= 0.03) return { score: 6, label: "Positive", bias: "NEUTRAL" };
-  if (percent <= -0.1) return { score: 8, label: "Crowded short", bias: "LONG" };
-  if (percent <= -0.03) return { score: 6, label: "Negative", bias: "NEUTRAL" };
-  return { score: 5, label: "Neutral", bias: "NEUTRAL" };
+  if (oiChange >= 1 && priceChange > 0 && price > ema21) return tool(10, `OI +${oiChange.toFixed(1)}% with price`, "LONG");
+  if (oiChange >= 1 && priceChange < 0 && price < ema21) return tool(10, `OI +${oiChange.toFixed(1)}% with price`, "SHORT");
+  return tool(0, `OI ${oiChange >= 0 ? "+" : ""}${oiChange.toFixed(1)}%`, "NEUTRAL");
 }
 
 function getStatus(score: number): string {
@@ -466,26 +433,46 @@ function getRisk(atrPercent: number | null, status: string): "Low" | "Moderate" 
   return "Low";
 }
 
-function windowMeta() {
-  const windowMs = 30 * 60 * 1000;
-  const windowId = Math.floor(Date.now() / windowMs);
-  const capturedAt = new Date(windowId * windowMs).toISOString();
-  const scanId = new Date(windowId * windowMs).toISOString();
-  return { windowId, capturedAt, scanId };
-}
-
 function inferDirection(tools: Record<string, ToolResult>, score: number): Bias {
   let long = 0;
   let short = 0;
 
-  Object.values(tools).forEach((tool) => {
-    if (tool.bias === "LONG") long += tool.score;
-    if (tool.bias === "SHORT") short += tool.score;
-  });
+  for (const current of Object.values(tools)) {
+    if (current.bias === "LONG") long += current.score;
+    if (current.bias === "SHORT") short += current.score;
+  }
 
-  if (score < 80) return "NEUTRAL";
-  if (long === short) return "NEUTRAL";
+  if (score < 80 || long === short) return "NEUTRAL";
   return long > short ? "LONG" : "SHORT";
+}
+
+function getEntryStatus(
+  score: number,
+  direction: Bias,
+  breakoutLong: boolean,
+  breakoutShort: boolean,
+  supportDistance: number,
+  resistanceDistance: number,
+): EntryStatus {
+  if (direction === "NEUTRAL" || score < 80) return "NO TRADE";
+  if (score >= 130) return "PUMPED";
+  if (score >= 120) return "EXTENDED";
+  if (breakoutLong || breakoutShort) return "BREAKOUT";
+
+  if (direction === "LONG") {
+    if (supportDistance <= 1.2 && supportDistance < resistanceDistance) return score >= 100 ? "VALID ENTRY ZONE" : "RETEST";
+    return "WAIT RETEST";
+  }
+
+  if (resistanceDistance <= 1.2 && resistanceDistance < supportDistance) return score >= 100 ? "VALID ENTRY ZONE" : "RETEST";
+  return "WAIT RETEST";
+}
+
+function windowMeta() {
+  const windowMs = 30 * 60 * 1000;
+  const windowId = Math.floor(Date.now() / windowMs);
+  const capturedAt = new Date(windowId * windowMs).toISOString();
+  return { windowId, capturedAt, scanId: capturedAt };
 }
 
 async function getKlines(symbol: string, interval: "15m" | "1h", limit: number) {
@@ -494,6 +481,59 @@ async function getKlines(symbol: string, interval: "15m" | "1h", limit: number) 
     `/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
   );
   return toClosedCandles(rows);
+}
+
+async function getFundingForSymbol(symbol: string, globalValue: string | undefined): Promise<number | null> {
+  if (globalValue !== undefined) {
+    const value = Number(globalValue);
+    if (Number.isFinite(value)) return value;
+  }
+
+  const latest = await safeFetch<FundingRow[]>(
+    FUTURES_BASES,
+    `/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
+  );
+
+  const value = latest?.[0]?.fundingRate;
+  if (value === undefined) return null;
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function getOiChangeForSymbol(symbol: string): Promise<{ change: number | null; current: number | null }> {
+  const [historyWithPerpetual, historyDefault, current] = await Promise.all([
+    safeFetch<OiHistoryRow[]>(
+      FUTURES_BASES,
+      `/futures/data/openInterestHist?symbol=${symbol}&period=15m&contractType=PERPETUAL&limit=2`,
+    ),
+    safeFetch<OiHistoryRow[]>(
+      FUTURES_BASES,
+      `/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`,
+    ),
+    safeFetch<OiCurrentRow>(
+      FUTURES_BASES,
+      `/fapi/v1/openInterest?symbol=${symbol}`,
+    ),
+  ]);
+
+  const history = (historyWithPerpetual && historyWithPerpetual.length >= 2
+    ? historyWithPerpetual
+    : historyDefault && historyDefault.length >= 2
+      ? historyDefault
+      : null);
+
+  let change: number | null = null;
+  if (history) {
+    const first = Number(history[0].sumOpenInterestValue ?? history[0].sumOpenInterest);
+    const last = Number(history[history.length - 1].sumOpenInterestValue ?? history[history.length - 1].sumOpenInterest);
+    if (first > 0 && Number.isFinite(first) && Number.isFinite(last)) {
+      change = ((last - first) / first) * 100;
+    }
+  }
+
+  const currentValue = current?.openInterest !== undefined ? Number(current.openInterest) : null;
+  return { change, current: currentValue !== null && Number.isFinite(currentValue) ? currentValue : null };
 }
 
 export async function GET() {
@@ -512,12 +552,11 @@ export async function GET() {
     ]);
 
     const tradable = exchangeInfo.symbols
-      .filter(
-        (item) =>
-          item.status === "TRADING" &&
-          item.quoteAsset === "USDT" &&
-          item.isSpotTradingAllowed !== false &&
-          !STABLE_BASES.has(item.baseAsset),
+      .filter((item) =>
+        item.status === "TRADING" &&
+        item.quoteAsset === "USDT" &&
+        item.isSpotTradingAllowed !== false &&
+        !STABLE_BASES.has(item.baseAsset),
       )
       .map((item) => item.symbol);
 
@@ -534,9 +573,8 @@ export async function GET() {
         const change24h = Number(ticker.priceChangePercent);
         const volume24h = Number(ticker.quoteVolume);
 
-        if (!Number.isFinite(price) || !Number.isFinite(change24h) || !Number.isFinite(volume24h)) {
-          return null;
-        }
+        if (!Number.isFinite(price) || !Number.isFinite(change24h) || !Number.isFinite(volume24h)) return null;
+        if (volume24h < 20_000_000) return null;
 
         return { symbol, price, change24h, volume24h };
       })
@@ -544,44 +582,50 @@ export async function GET() {
       .sort((a, b) => b.volume24h - a.volume24h)
       .slice(0, 10);
 
-    const btc15 = await getKlines("BTCUSDT", "15m", 120);
-    const btc1h = await getKlines("BTCUSDT", "1h", 120);
+    const [btc15, btc1h] = await Promise.all([
+      getKlines("BTCUSDT", "15m", 120),
+      getKlines("BTCUSDT", "1h", 120),
+    ]);
 
-    const btc15Close = btc15[btc15.length - 1]?.close ?? 0;
-    const btc1hClose = btc1h[btc1h.length - 1]?.close ?? 0;
-    const btc15Ema9 = ema(btc15.map((c) => c.close), 9);
-    const btc15Ema21 = ema(btc15.map((c) => c.close), 21);
-    const btc1hEma21 = ema(btc1h.map((c) => c.close), 21);
-    const btc15Momentum = btc15.length >= 5
-      ? ((btc15Close / btc15[btc15.length - 5].close) - 1) * 100
-      : 0;
-    const btc1hMomentum = btc1h.length >= 4
-      ? ((btc1hClose / btc1h[btc1h.length - 4].close) - 1) * 100
-      : 0;
+    if (btc15.length < 60 || btc1h.length < 40) {
+      throw new Error("BTC market data is temporarily incomplete");
+    }
 
-    const btcBull = btc15Close > btc15Ema9 && btc15Ema9 > btc15Ema21 && btc1hClose > btc1hEma21 && btc1hMomentum >= 0;
-    const btcBear = btc15Close < btc15Ema9 && btc15Ema9 < btc15Ema21 && btc1hClose < btc1hEma21 && btc1hMomentum <= 0;
+    const btc15Closes = btc15.map((c) => c.close);
+    const btc1hCloses = btc1h.map((c) => c.close);
+    const btc15Close = btc15Closes[btc15Closes.length - 1];
+    const btc1hClose = btc1hCloses[btc1hCloses.length - 1];
+    const btc15Ema9 = ema(btc15Closes, 9);
+    const btc15Ema21 = ema(btc15Closes, 21);
+    const btc15Ema50 = ema(btc15Closes, 50);
+    const btc1hEma21 = ema(btc1hCloses, 21);
+    const btc1hEma50 = ema(btc1hCloses, 50);
+    const btc15Momentum = ((btc15Close / btc15Closes[Math.max(0, btc15Closes.length - 5)] - 1) * 100);
+    const btc1hMomentum = ((btc1hClose / btc1hCloses[Math.max(0, btc1hCloses.length - 4)] - 1) * 100);
+    const btcBull = btc15Close > btc15Ema9 && btc15Ema9 > btc15Ema21 && btc15Ema21 > btc15Ema50 && btc1hClose > btc1hEma21 && btc1hEma21 >= btc1hEma50 && btc15Momentum > 0 && btc1hMomentum > 0;
+    const btcBear = btc15Close < btc15Ema9 && btc15Ema9 < btc15Ema21 && btc15Ema21 < btc15Ema50 && btc1hClose < btc1hEma21 && btc1hEma21 <= btc1hEma50 && btc15Momentum < 0 && btc1hMomentum < 0;
     const btcRegime: "Bullish" | "Bearish" | "Neutral" = btcBull ? "Bullish" : btcBear ? "Bearish" : "Neutral";
 
     const rows = await Promise.all(
       candidates.map(async (candidate): Promise<SignalRow | null> => {
         try {
-          const [raw15m, raw1h, oiHistory] = await Promise.all([
+          const [raw15m, raw1h, oiData, funding] = await Promise.all([
             safeFetch<Kline[]>(SPOT_BASES, `/api/v3/klines?symbol=${candidate.symbol}&interval=15m&limit=121`),
             safeFetch<Kline[]>(SPOT_BASES, `/api/v3/klines?symbol=${candidate.symbol}&interval=1h&limit=121`),
-            safeFetch<OiRow[]>(FUTURES_BASES, `/futures/data/openInterestHist?symbol=${candidate.symbol}&period=15m&limit=2`),
+            getOiChangeForSymbol(candidate.symbol),
+            getFundingForSymbol(candidate.symbol, fundingMap.get(candidate.symbol)?.fundingRate),
           ]);
 
           if (!raw15m || !raw1h) return null;
 
           const c15 = toClosedCandles(raw15m);
           const c1h = toClosedCandles(raw1h);
-
-          if (c15.length < 60 || c1h.length < 30) return null;
+          if (c15.length < 60 || c1h.length < 40) return null;
 
           const closes15 = c15.map((c) => c.close);
           const closes1h = c1h.map((c) => c.close);
           const current = c15[c15.length - 1];
+          const previous = c15[c15.length - 2];
 
           const previous20 = c15.slice(-21, -1);
           const averageVolume = previous20.length
@@ -593,20 +637,20 @@ export async function GET() {
           const ema21 = ema(closes15, 21);
           const ema50 = ema(closes15, 50);
           const ema1h21 = ema(closes1h, 21);
-
+          const ema1h50 = ema(closes1h, 50);
           const vwapValue = vwap(c15);
           const rsiValue = rsi(closes15);
           const macdValue = macd(closes15);
           const atrValue = atr(c15);
           const adxValue = adx(c15);
 
-          const prior = c15.slice(-21, -1);
-          const support = Math.min(...prior.map((c) => c.low));
-          const resistance = Math.max(...prior.map((c) => c.high));
+          const structure = c15.slice(-21, -1);
+          const support = Math.min(...structure.map((c) => c.low));
+          const resistance = Math.max(...structure.map((c) => c.high));
 
-          const momentum15m = c15.length >= 5
-            ? ((current.close / c15[c15.length - 5].close) - 1) * 100
-            : 0;
+          const change15m = previous.close > 0 ? ((current.close / previous.close) - 1) * 100 : 0;
+          const oneHourAgo = c15[Math.max(0, c15.length - 5)]?.close ?? current.close;
+          const change1h = oneHourAgo > 0 ? ((current.close / oneHourAgo) - 1) * 100 : 0;
           const momentum1h = c1h.length >= 4
             ? ((c1h[c1h.length - 1].close / c1h[c1h.length - 4].close) - 1) * 100
             : 0;
@@ -620,139 +664,126 @@ export async function GET() {
             if (Number.isFinite(mid) && mid > 0) spreadBps = ((ask - bid) / mid) * 10000;
           }
 
-          const fundingRaw = fundingMap.get(candidate.symbol)?.fundingRate;
-          const funding = fundingRaw === undefined ? null : Number(fundingRaw);
-
-          let oiChange: number | null = null;
-          if (oiHistory && oiHistory.length >= 2) {
-            const first = Number(oiHistory[0].sumOpenInterestValue);
-            const last = Number(oiHistory[oiHistory.length - 1].sumOpenInterestValue);
-            if (first > 0 && Number.isFinite(first) && Number.isFinite(last)) {
-              oiChange = ((last - first) / first) * 100;
-            }
-          }
-
-          const tools: Record<string, ToolResult> = {};
-
-          tools["Volume Spike"] = scoreVolume(volumeSpike, candidate.change24h);
-          tools["EMA Trend"] = scoreDirection(
-            current.close > ema9 && ema9 > ema21 && ema21 > ema50,
-            current.close < ema9 && ema9 < ema21 && ema21 < ema50,
-            1,
-          );
-          tools.VWAP = scoreDirection(
-            vwapValue !== null && current.close > vwapValue * 1.002,
-            vwapValue !== null && current.close < vwapValue * 0.998,
-            0.9,
-          );
-          tools.RSI = scoreRsi(rsiValue);
-          tools.MACD = scoreDirection(
-            macdValue.line > 0 && macdValue.histogram > 0,
-            macdValue.line < 0 && macdValue.histogram < 0,
-            1,
-          );
-
-          const breakoutLong = current.close > resistance && current.volume >= averageVolume;
-          const breakoutShort = current.close < support && current.volume >= averageVolume;
-          tools.Breakout = scoreDirection(
-            breakoutLong,
-            breakoutShort,
-            breakoutLong || breakoutShort ? 1 : 0.5,
-          );
-
-          if (oiChange === null) {
-            tools["OI Change"] = { score: 5, label: "N/A", bias: "NEUTRAL" };
-          } else {
-            const long = oiChange > 1.5 && current.close > ema21;
-            const short = oiChange > 1.5 && current.close < ema21;
-            tools["OI Change"] = {
-              score: Math.abs(oiChange) >= 3 ? 10 : Math.abs(oiChange) >= 1.5 ? 8 : 5,
-              label: `${oiChange >= 0 ? "+" : ""}${oiChange.toFixed(1)}%`,
-              bias: long ? "LONG" : short ? "SHORT" : "NEUTRAL",
-            };
-          }
-
-          tools.Funding = scoreFunding(funding);
-          tools["BTC Confirmation"] = scoreDirection(
-            btcBull && momentum15m > 0 && current.close > ema21,
-            btcBear && momentum15m < 0 && current.close < ema21,
-            0.9,
-          );
-          tools.Liquidity = scoreLiquidity(candidate.volume24h, spreadBps);
-
-          const atrPercent = atrValue === null || current.close <= 0 ? null : (atrValue / current.close) * 100;
-          tools.ATR = scoreAtr(atrPercent);
-
+          const atrPercent = atrValue !== null && current.close > 0 ? (atrValue / current.close) * 100 : null;
           const distanceToSupport = current.close > 0 ? ((current.close - support) / current.close) * 100 : 0;
           const distanceToResistance = current.close > 0 ? ((resistance - current.close) / current.close) * 100 : 0;
-          tools["Support / Resistance"] = scoreDirection(
-            distanceToSupport >= 0.5 && distanceToResistance >= 1.0,
-            distanceToResistance >= 0.5 && distanceToSupport >= 1.0,
-            0.8,
-          );
 
-          tools["Trend Strength"] = scoreDirection(
+          const breakoutLong = current.close > resistance && current.volume >= averageVolume * 1.2 && current.close > previous.close;
+          const breakoutShort = current.close < support && current.volume >= averageVolume * 1.2 && current.close < previous.close;
+
+          const tools: Record<string, ToolResult> = {};
+          tools["Volume Spike"] = volumeTool(volumeSpike, change15m);
+          tools["EMA Trend"] = binaryDirection(
+            current.close > ema9 && ema9 > ema21 && ema21 > ema50,
+            current.close < ema9 && ema9 < ema21 && ema21 < ema50,
+            "EMA 9/21/50 bullish",
+            "EMA 9/21/50 bearish",
+          );
+          tools.VWAP = binaryDirection(
+            vwapValue !== null && current.close >= vwapValue * 1.002,
+            vwapValue !== null && current.close <= vwapValue * 0.998,
+            "Above VWAP",
+            "Below VWAP",
+          );
+          tools.RSI = rsiTool(rsiValue);
+          tools.MACD = binaryDirection(
+            macdValue.histogram > 0 && macdValue.line > 0,
+            macdValue.histogram < 0 && macdValue.line < 0,
+            "MACD bullish",
+            "MACD bearish",
+          );
+          tools.Breakout = binaryDirection(
+            breakoutLong,
+            breakoutShort,
+            "Confirmed 15m breakout",
+            "Confirmed 15m breakdown",
+          );
+          tools["OI Change"] = oiTool(oiData.change, candidate.change24h, ema21, current.close);
+          tools.Funding = fundingTool(funding);
+          tools["BTC Confirmation"] = binaryDirection(
+            btcBull && current.close > ema21 && change1h > 0,
+            btcBear && current.close < ema21 && change1h < 0,
+            "BTC trend confirms long",
+            "BTC trend confirms short",
+          );
+          tools.Liquidity = liquidityTool(candidate.volume24h, spreadBps);
+          tools.ATR = atrTool(atrPercent);
+          tools["Support / Resistance"] = binaryDirection(
+            distanceToSupport <= 1.5 && distanceToSupport < distanceToResistance,
+            distanceToResistance <= 1.5 && distanceToResistance < distanceToSupport,
+            "Near support with room",
+            "Near resistance with room",
+          );
+          tools["Trend Strength"] = binaryDirection(
             adxValue !== null && adxValue >= 20 && ema9 > ema21,
             adxValue !== null && adxValue >= 20 && ema9 < ema21,
-            adxValue === null ? 0.5 : Math.min(adxValue / 30, 1),
+            `ADX ${adxValue === null ? "N/A" : adxValue.toFixed(1)} bullish`,
+            `ADX ${adxValue === null ? "N/A" : adxValue.toFixed(1)} bearish`,
+          );
+          tools["Momentum Alignment"] = binaryDirection(
+            change15m > 0.15 && momentum1h > 0.3,
+            change15m < -0.15 && momentum1h < -0.3,
+            "15m + 1h momentum aligned",
+            "15m + 1h momentum aligned",
+          );
+          tools["Market Regime"] = binaryDirection(
+            ema1h21 > ema1h50 && current.close > ema21 && momentum1h > 0,
+            ema1h21 < ema1h50 && current.close < ema21 && momentum1h < 0,
+            "Bull trend regime",
+            "Bear trend regime",
           );
 
-          tools["Momentum Alignment"] = scoreDirection(
-            momentum15m > 0.15 && momentum1h > 0.3,
-            momentum15m < -0.15 && momentum1h < -0.3,
-            1,
-          );
-
-          const regimeBull = ema21 > ema50 && current.close > ema21 && momentum1h > 0;
-          const regimeBear = ema21 < ema50 && current.close < ema21 && momentum1h < 0;
-          tools["Market Regime"] = scoreDirection(regimeBull, regimeBear, 0.9);
-
-          const score = Object.values(tools).reduce((sum, tool) => sum + tool.score, 0);
+          const score = Object.values(tools).reduce((sum, currentTool) => sum + currentTool.score, 0);
           const direction = inferDirection(tools, score);
           const status = getStatus(score);
+          const entryStatus = getEntryStatus(score, direction, breakoutLong, breakoutShort, distanceToSupport, distanceToResistance);
 
           const reasons: string[] = [];
-          if (volumeSpike >= 1.5) reasons.push(`Volume ${volumeSpike.toFixed(1)}× vs 20-bar avg`);
-          if (breakoutLong) reasons.push("15m resistance breakout");
-          if (breakoutShort) reasons.push("15m support breakdown");
-          if (oiChange !== null && Math.abs(oiChange) >= 1.5) reasons.push(`OI ${oiChange >= 0 ? "+" : ""}${oiChange.toFixed(1)}%`);
-          if (rsiValue !== null && rsiValue >= 70) reasons.push("RSI overbought");
-          if (rsiValue !== null && rsiValue <= 30) reasons.push("RSI oversold");
-          if (reasons.length === 0) reasons.push("Multiple market factors aligned");
+          const triggered = Object.entries(tools)
+            .filter(([, value]) => value.score === 10)
+            .map(([name, value]) => `${name}: ${value.label}`);
 
-          const invalidation = atrValue === null
-            ? null
-            : direction === "LONG"
-              ? Math.max(0, current.close - atrValue * 1.2)
-              : direction === "SHORT"
-                ? current.close + atrValue * 1.2
-                : null;
+          if (triggered.length) reasons.push(...triggered.slice(0, 4));
+          if (reasons.length === 0) reasons.push("Not enough confluence for a trade setup");
 
-          const row: SignalRow = {
+          const invalidation = direction === "LONG"
+            ? Math.max(support * 0.998, current.close - (atrValue ?? 0))
+            : direction === "SHORT"
+              ? Math.min(resistance * 1.002, current.close + (atrValue ?? 0))
+              : null;
+
+          return {
             symbol: candidate.symbol,
             baseAsset: candidate.symbol.replace(/USDT$/, ""),
             direction,
             score,
             status,
+            entryStatus,
             price: candidate.price,
+            triggerPrice: current.close,
             priceChange24h: candidate.change24h,
+            change15m,
+            change1h,
             volumeSpike,
+            incomingVolume: current.quoteVolume,
             rsi: rsiValue,
             funding,
-            openInterestChange: oiChange,
+            openInterest: oiData.current,
+            openInterestUsd: oiData.current !== null ? oiData.current * candidate.price : null,
+            openInterestChange: oiData.change,
             atrPercent,
             support,
+            supportDistance: distanceToSupport,
             resistance,
+            resistanceDistance: distanceToResistance,
             invalidation,
             riskLevel: getRisk(atrPercent, status),
             liquidity: candidate.volume24h,
             spreadBps,
             capturedAt,
             tools,
-            reasons: reasons.slice(0, 3),
+            reasons: reasons.slice(0, 4),
           };
-
-          return row;
         } catch {
           return null;
         }
@@ -762,7 +793,7 @@ export async function GET() {
     const data = rows
       .filter((row): row is SignalRow => row !== null)
       .sort((a, b) => b.score - a.score)
-      .filter((row) => row.score >= 80)
+      .filter((row) => row.score >= 80 && row.direction !== "NEUTRAL")
       .slice(0, 24);
 
     const response = {
@@ -775,7 +806,6 @@ export async function GET() {
     };
 
     scanCache = { windowId, data: response };
-
     return NextResponse.json(response);
   } catch (error) {
     return NextResponse.json(
