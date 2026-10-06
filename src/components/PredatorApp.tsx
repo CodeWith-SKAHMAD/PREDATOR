@@ -2676,13 +2676,13 @@ function CalculatorPage() {
     const operator = ["÷", "×", "-", "+", "="].includes(key);
     const utility = ["AC", "⌫", "%", "±"].includes(key);
     return {
-      minHeight: "76px",
+      minHeight: "64px",
       width: "100%",
       borderRadius: "999px",
       border: operator ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(255,255,255,0.06)",
       background: operator ? (key === "=" ? "#ff9f0a" : "#ff9f0a") : utility ? "#a5a5a5" : "#333333",
       color: operator ? "#ffffff" : utility ? "#111111" : "#ffffff",
-      fontSize: "24px",
+      fontSize: "22px",
       fontWeight: 700,
       fontFamily: "Inter, sans-serif",
       cursor: "pointer",
@@ -2713,28 +2713,25 @@ function CalculatorPage() {
           <div
             style={{
               width: "100%",
-              maxWidth: "640px",
+              maxWidth: "500px",
               margin: "0 auto",
-              padding: "8px 2px 2px",
+              padding: "2px 0 0",
             }}
           >
-            <div className="label" style={{ marginBottom: "8px" }}>NORMAL CALCULATOR</div>
-            <h2 style={{ marginTop: 0, fontSize: "24px" }}>iPhone-style Calculator</h2>
-
             <div
               className="result mono"
               style={{
-                minHeight: "118px",
+                minHeight: "96px",
                 display: "flex",
                 alignItems: "flex-end",
                 justifyContent: "flex-end",
                 overflow: "auto",
                 whiteSpace: "nowrap",
-                padding: "18px 8px 14px",
-                marginTop: "10px",
+                padding: "10px 4px 10px",
+                marginTop: "0",
                 background: "transparent",
                 border: "0",
-                fontSize: display.length > 12 ? "40px" : "60px",
+                fontSize: display.length > 12 ? "34px" : "52px",
                 lineHeight: 1,
                 fontWeight: 500,
                 color: "#f2f2f7",
@@ -2749,8 +2746,8 @@ function CalculatorPage() {
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: "12px",
-                marginTop: "8px",
+                gap: "10px",
+                marginTop: "4px",
                 width: "100%",
               }}
             >
@@ -2777,9 +2774,6 @@ function CalculatorPage() {
               ))}
             </div>
 
-            <p className="muted" style={{ margin: "14px 4px 0", fontSize: "11px" }}>
-              iPhone-inspired layout: large display, circular keys and dedicated operator column.
-            </p>
           </div>
         </Card>
 
