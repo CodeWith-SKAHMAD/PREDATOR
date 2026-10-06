@@ -757,7 +757,7 @@ function CompactSignalCard({
         style={{
           flex: 1,
           minWidth: 0,
-          padding: "9px 11px",
+          padding: "7px 9px",
           borderRadius: 12,
           border: `1px solid ${positive ? "rgba(16,231,160,.26)" : "rgba(255,89,109,.22)"}`,
           background: positive ? "linear-gradient(180deg, rgba(16,231,160,.09), rgba(16,231,160,.035))" : "linear-gradient(180deg, rgba(255,89,109,.08), rgba(255,89,109,.025))",
@@ -765,7 +765,7 @@ function CompactSignalCard({
         }}
       >
         <span style={{ display: "block", color: "#95a0ad", fontSize: 10, letterSpacing: ".05em", marginBottom: 3 }}>{label}</span>
-        <strong style={{ color: positive ? "#31efb3" : "#ff6f80", fontSize: 15 }}>{
+        <strong style={{ color: positive ? "#31efb3" : "#ff6f80", fontSize: 13 }}>{
           typeof value === "number" ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "N/A"
         }</strong>
       </div>
@@ -779,8 +779,8 @@ function CompactSignalCard({
       style={{
         width: "100%",
         textAlign: "left",
-        padding: 15,
-        borderRadius: 18,
+        padding: 12,
+        borderRadius: 15,
         border: "1px solid rgba(125,170,215,.24)",
         background: "linear-gradient(145deg, rgba(17,25,34,.90), rgba(7,11,16,.96))",
         boxShadow: "0 18px 35px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.045), inset 0 0 30px rgba(72,126,176,.035)",
@@ -805,17 +805,17 @@ function CompactSignalCard({
             <CompactCoinIcon baseAsset={baseAsset} />
             <div style={{ minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-                <strong style={{ fontSize: 19, letterSpacing: ".015em" }}>{baseAsset}</strong>
+                <strong style={{ fontSize: 16, letterSpacing: ".015em" }}>{baseAsset}</strong>
                 <span style={{ color: "#84909c", fontSize: 11 }}>USDT</span>
               </div>
-              <div style={{ color: "#75818d", fontSize: 10, marginTop: 4 }}>{expired ? "EXPIRED SIGNAL" : scoreText}</div>
+              <div style={{ color: "#75818d", fontSize: 10, marginTop: 3 }}>{expired ? "EXPIRED SIGNAL" : scoreText}</div>
             </div>
           </div>
 
           <div
             style={{
-              width: 58,
-              height: 58,
+              width: 52,
+              height: 52,
               borderRadius: "50%",
               display: "grid",
               placeItems: "center",
@@ -824,18 +824,18 @@ function CompactSignalCard({
               boxShadow: `0 0 19px ${direction === "LONG" ? "rgba(16,231,160,.14)" : "rgba(255,89,109,.13)"}`,
             }}
           >
-            <div style={{ width: 48, height: 48, borderRadius: "50%", display: "grid", placeItems: "center", background: "#0b1118", border: "1px solid rgba(255,255,255,.05)" }}>
-              <strong className="mono" style={{ fontSize: 16 }}>{score}</strong>
+            <div style={{ width: 43, height: 43, borderRadius: "50%", display: "grid", placeItems: "center", background: "#0b1118", border: "1px solid rgba(255,255,255,.05)" }}>
+              <strong className="mono" style={{ fontSize: 15 }}>{score}</strong>
             </div>
           </div>
         </div>
 
-        <div className="mono" style={{ fontSize: 28, fontWeight: 800, marginTop: 12, letterSpacing: ".01em" }}>
+        <div className="mono" style={{ fontSize: 24, fontWeight: 800, marginTop: 9, letterSpacing: ".01em" }}>
           {formatPrice(price)}
         </div>
         <div style={{ color: "#74808c", fontSize: 9, marginTop: 2 }}>CURRENT PRICE</div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
           {metricBox("1H", change1h)}
           {metricBox("15M", change15m)}
         </div>
@@ -844,23 +844,23 @@ function CompactSignalCard({
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
-            gap: 8,
-            marginTop: 10,
-            paddingTop: 10,
+            gap: 6,
+            marginTop: 8,
+            paddingTop: 8,
             borderTop: "1px solid rgba(255,255,255,.08)",
           }}
         >
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
               <span style={{ color: "#31efb3", fontWeight: 800, fontSize: 12 }}>S</span>
-              <strong style={{ color: "#31efb3", fontSize: 15 }}>
+              <strong style={{ color: "#31efb3", fontSize: 13 }}>
                 {typeof supportDistance === "number" ? `${supportDistance >= 0 ? "↑" : "↓"} ${Math.abs(supportDistance).toFixed(2)}%` : "N/A"}
               </strong>
             </div>
-            <div className="mono" style={{ color: "#b6c1cb", fontSize: 10, marginTop: 4 }}>{support === null ? "—" : formatPrice(support)}</div>
+            <div className="mono" style={{ color: "#b6c1cb", fontSize: 9, marginTop: 3 }}>{support === null ? "—" : formatPrice(support)}</div>
           </div>
 
-          <div style={{ minWidth: 0, paddingLeft: 10, borderLeft: "1px solid rgba(255,255,255,.07)" }}>
+          <div style={{ minWidth: 0, paddingLeft: 8, borderLeft: "1px solid rgba(255,255,255,.07)" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
               <span style={{ color: "#ff6f80", fontWeight: 800, fontSize: 12 }}>R</span>
               <strong style={{ color: "#ff6f80", fontSize: 15 }}>
@@ -877,14 +877,14 @@ function CompactSignalCard({
             alignItems: "center",
             justifyContent: "space-between",
             gap: 10,
-            marginTop: 10,
-            paddingTop: 10,
+            marginTop: 8,
+            paddingTop: 8,
             borderTop: "1px solid rgba(255,255,255,.07)",
           }}
         >
           <div>
             <div style={{ color: "#78838f", fontSize: 10 }}>FUNDING RATE</div>
-            <strong style={{ color: fundingRate !== null && fundingRate < 0 ? "#ff6f80" : "#31efb3", fontSize: 14 }}>
+            <strong style={{ color: fundingRate !== null && fundingRate < 0 ? "#ff6f80" : "#31efb3", fontSize: 12 }}>
               {fundingText}
             </strong>
           </div>
@@ -897,13 +897,13 @@ function CompactSignalCard({
             )}
             <span
               style={{
-                padding: "7px 14px",
+                padding: "6px 11px",
                 borderRadius: 10,
                 border: `1px solid ${accent}66`,
                 color: accent,
                 background: `${direction === "LONG" ? "rgba(16,231,160,.075)" : "rgba(255,89,109,.075)"}`,
                 fontWeight: 800,
-                fontSize: 12,
+                fontSize: 11,
                 letterSpacing: ".04em",
               }}
             >
@@ -1447,10 +1447,11 @@ function Signals({
           {!loading &&
             topRows.length > 0 && (
               <div
+                className="signal-card-grid"
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: 14,
+                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                  gap: 10,
                 }}
               >
                 {topRows.map((signal) => (
@@ -1531,10 +1532,11 @@ function Signals({
               </div>
             ) : (
               <div
+                className="signal-card-grid"
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                  gap: 14,
+                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                  gap: 10,
                 }}
               >
                 {history.slice(0, 48).map((item) => {
@@ -2907,6 +2909,13 @@ export default function PredatorApp({ user }: { user: User }){
       @keyframes predatorRoutePulse {
         0%, 100% { opacity: .35; width: 80px; }
         50% { opacity: 1; width: 150px; }
+      }
+      .signal-card-grid { width: 100%; }
+      @media (max-width: 1180px) {
+        .signal-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+      }
+      @media (max-width: 700px) {
+        .signal-card-grid { grid-template-columns: 1fr !important; }
       }
       @media (prefers-reduced-motion: reduce) {
         .app button, .app .logo-link, .predator-content-wrap, .predator-page-frame, .predator-route-indicator {
