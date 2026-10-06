@@ -437,8 +437,197 @@ function Signals() {
 }
 
 function VolumeSpike() {
-  return <div className="page"><div className="page-head"><div><p className="eyebrow">UNUSUAL ACTIVITY</p><h1>Volume Spike</h1><p className="muted">Activity monitor — not a trade signal.</p></div><div className="chips"><button className="chip active">1H</button><button className="chip">4H</button><button className="chip">1D</button></div></div>
-  <Card><div className="table-wrap"><table><thead><tr><th>COIN</th><th>SPIKE</th><th>VOLUME</th><th>RSI</th><th>LEVEL</th><th>TIMEFRAME</th><th></th></tr></thead><tbody>{spikes.map((x,i)=><tr key={i}><td><b>{x[0]}</b></td><td className="mono">{x[1]}</td><td className="mono">{x[2]}</td><td className="mono">{x[3]}</td><td><span className={"level "+x[4].toLowerCase()}>{x[4]}</span></td><td>{x[5]}</td><td><ChevronRight size={16}/></td></tr>)}</tbody></table></div></Card></div>
+  const [interval, setIntervalValue] = useState<"1h" | "4h" | "1d">("1h");
+  const [rows, setRows] = useState<Array<{
+    symbol: string;
+    price: number;
+    change24h: number;
+    volume: number;
+    averageVolume: number;
+    spike: number;
+    rsi: number | null;
+    level: string;
+    reason: string;
+  }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const load = async () => {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await fetch(`/api/volume-spike?interval=${interval}`, {
+          cache: "no-store",
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Volume data unavailable");
+        }
+
+        if (!active) return;
+
+        setRows(data.rows || []);
+        setLastUpdated(new Date(data.updatedAt));
+      } catch (requestError) {
+        if (!active) return;
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Volume data unavailable"
+        );
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    load();
+
+    const timer = window.setInterval(load, 60000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [interval]);
+
+  const formatVolume = (value: number) => {
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+    if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+    return `$${value.toFixed(0)}`;
+  };
+
+  const formatRsi = (value: number | null) =>
+    value === null ? "—" : value.toFixed(0);
+
+  const rsiStatus = (value: number | null) => {
+    if (value === null) return "Normal";
+    if (value >= 70) return "Overbought";
+    if (value <= 30) return "Oversold";
+    return "Neutral";
+  };
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">UNUSUAL ACTIVITY</p>
+          <h1>Volume Spike</h1>
+          <p className="muted">
+            Activity monitor — not a trade signal.
+          </p>
+        </div>
+
+        <div className="chips">
+          {([
+            ["1h", "1H"],
+            ["4h", "4H"],
+            ["1d", "1D"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              className={interval === value ? "chip active" : "chip"}
+              onClick={() => setIntervalValue(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <Card>
+        <div className="card-head">
+          <div>
+            <span className="label">LIVE SCAN</span>
+            <h2>{loading ? "Scanning..." : `${rows.length} markets`}</h2>
+          </div>
+
+          <span className="muted">
+            {lastUpdated
+              ? `Updated ${lastUpdated.toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}`
+              : "Waiting for data"}
+          </span>
+        </div>
+
+        {error ? (
+          <div className="auth-message error">{error}</div>
+        ) : loading && rows.length === 0 ? (
+          <div className="muted" style={{ padding: "22px 0" }}>
+            Loading unusual activity…
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="muted" style={{ padding: "22px 0" }}>
+            No unusual activity found for this timeframe.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>COIN</th>
+                  <th>SPIKE</th>
+                  <th>VOLUME</th>
+                  <th>RSI</th>
+                  <th>RSI STATUS</th>
+                  <th>LEVEL</th>
+                  <th>WHY</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.symbol}>
+                    <td>
+                      <b>{row.symbol.replace("USDT", "/USDT")}</b>
+                    </td>
+
+                    <td className="mono">
+                      {row.spike.toFixed(1)}×
+                    </td>
+
+                    <td className="mono">
+                      {formatVolume(row.volume)}
+                    </td>
+
+                    <td className="mono">
+                      {formatRsi(row.rsi)}
+                    </td>
+
+                    <td>
+                      <span className="muted">
+                        {rsiStatus(row.rsi)}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className={`level ${row.level.toLowerCase()}`}>
+                        {row.level}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className="muted">{row.reason}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 }
 
 function BTCReport(){return <div className="page"><div className="page-head"><div><p className="eyebrow">INTELLIGENCE CENTER</p><h1>BTC Report</h1><p className="muted">Market health, structure, cycle and key takeaways.</p></div></div><div className="stats-grid"><Card><span className="label">MARKET HEALTH</span><strong>82 / 100</strong><span className="up">Healthy</span></Card><Card><span className="label">MARKET CONDITION</span><strong>Bullish</strong><span className="muted">Trend aligned</span></Card><Card><span className="label">CYCLE SCORE</span><strong>74</strong><span className="muted">Expansion</span></Card><Card><span className="label">CYCLE STAGE</span><strong>Markup</strong><span className="muted">Watch resistance</span></Card></div><Card><div className="report-grid"><div><span className="label">SUPPORT</span><h2>$118,400</h2></div><div><span className="label">RESISTANCE</span><h2>$124,900</h2></div><div><span className="label">KEY TAKEAWAYS</span><p className="muted">Structure remains constructive. Confirm strength with volume and derivatives context before acting.</p></div></div></Card></div>}
