@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -109,6 +110,7 @@ type SignalRow = {
   change1h: number;
   volumeSpike: number;
   incomingVolume: number;
+  currentRangePercent: number;
   rsi: number | null;
   atrPercent: number | null;
   support: number;
@@ -139,6 +141,52 @@ type ScanCache = {
 };
 
 let scanCache: ScanCache | null = null;
+
+// One canonical scan snapshot for every visitor/account/browser.
+// The service-role key is server-only and must NEVER be exposed to the client.
+const sharedSupabase =
+  process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      })
+    : null;
+
+async function readSharedSnapshot(windowId: number): Promise<ScanCache["data"] | null> {
+  if (!sharedSupabase) return null;
+  try {
+    const { data, error } = await sharedSupabase
+      .from("signal_scan_snapshots")
+      .select("payload")
+      .eq("window_id", windowId)
+      .maybeSingle();
+    if (error || !data?.payload) return null;
+    return data.payload as ScanCache["data"];
+  } catch {
+    return null;
+  }
+}
+
+async function publishCanonicalSnapshot(
+  windowId: number,
+  data: ScanCache["data"],
+): Promise<ScanCache["data"]> {
+  if (!sharedSupabase) return data;
+
+  try {
+    // First writer wins for this 30-minute window.
+    await sharedSupabase
+      .from("signal_scan_snapshots")
+      .upsert(
+        { window_id: windowId, payload: data, created_at: data.updatedAt },
+        { onConflict: "window_id", ignoreDuplicates: true },
+      );
+
+    const canonical = await readSharedSnapshot(windowId);
+    return canonical ?? data;
+  } catch {
+    return data;
+  }
+}
 
 async function fetchJson<T>(bases: string[], path: string, timeoutMs = 6500): Promise<T> {
   let lastError = "Market data request failed";
@@ -387,13 +435,13 @@ function rsiTool(value: number | null): ToolResult {
 }
 
 
-function liquidityTool(volume24h: number, spreadBps: number | null): ToolResult {
-  const volumeOk = volume24h >= 50_000_000;
-  const spreadOk = spreadBps === null || spreadBps <= 8;
-  if (volumeOk && spreadOk) {
-    return tool(10, spreadBps === null ? "High liquidity" : `Liquidity ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
+function liquidityTool(_volume24h: number, spreadBps: number | null): ToolResult {
+  // Do not hard-exclude small-cap coins by 24h volume. For scalping,
+  // executable spread is the primary liquidity-quality check here.
+  if (spreadBps !== null && spreadBps <= 10) {
+    return tool(10, `Executable spread ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
   }
-  return tool(0, spreadBps === null ? "Liquidity filter failed" : `Wide spread ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
+  return tool(0, spreadBps === null ? "Order-book spread unavailable" : `Wide spread ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
 }
 
 function atrTool(atrPercent: number | null): ToolResult {
@@ -452,6 +500,88 @@ function inferDirection(tools: Record<string, ToolResult>, score: number): Bias 
 
   if (score < 80 || long === short) return "NEUTRAL";
   return long > short ? "LONG" : "SHORT";
+}
+
+function directionalTotals(tools: Record<string, ToolResult>) {
+  let long = 0;
+  let short = 0;
+  let longVotes = 0;
+  let shortVotes = 0;
+  for (const current of Object.values(tools)) {
+    if (current.bias === "LONG" && current.score === 10) { long += 10; longVotes += 1; }
+    if (current.bias === "SHORT" && current.score === 10) { short += 10; shortVotes += 1; }
+  }
+  return { long, short, longVotes, shortVotes };
+}
+
+function passesHardScalpFilter(args: {
+  direction: Bias;
+  score: number;
+  tools: Record<string, ToolResult>;
+  atrPercent: number | null;
+  spreadBps: number | null;
+  change15m: number;
+  change1h: number;
+  volumeSpike: number;
+  currentRangePercent: number;
+  btcRegime: "Bullish" | "Bearish" | "Neutral";
+  breakoutLong: boolean;
+  breakoutShort: boolean;
+  supportDistance: number;
+  resistanceDistance: number;
+}) {
+  const {
+    direction, score, tools, atrPercent, spreadBps, change15m, change1h, volumeSpike,
+    currentRangePercent, btcRegime, breakoutLong, breakoutShort, supportDistance, resistanceDistance,
+  } = args;
+
+  if (direction === "NEUTRAL") return false;
+  if (score < 110) return false;
+
+  // Mandatory execution-quality gates for scalping.
+  if (tools.Liquidity?.score !== 10) return false;
+  if (tools.ATR?.score !== 10) return false;
+  if (tools["EMA Trend"]?.bias !== direction || tools["EMA Trend"]?.score !== 10) return false;
+  if (tools.VWAP?.bias !== direction || tools.VWAP?.score !== 10) return false;
+  if (tools.RSI?.bias !== direction || tools.RSI?.score !== 10) return false;
+  if (tools.MACD?.bias !== direction || tools.MACD?.score !== 10) return false;
+  if (tools["Market Structure"]?.bias !== direction || tools["Market Structure"]?.score !== 10) return false;
+  if (tools["Trend Strength"]?.bias !== direction || tools["Trend Strength"]?.score !== 10) return false;
+  if (tools["Momentum Alignment"]?.bias !== direction || tools["Momentum Alignment"]?.score !== 10) return false;
+  if (tools["Market Regime"]?.bias !== direction || tools["Market Regime"]?.score !== 10) return false;
+  if (btcRegime !== "Neutral" && (tools["BTC Confirmation"]?.bias !== direction || tools["BTC Confirmation"]?.score !== 10)) return false;
+
+  const { long, short, longVotes, shortVotes } = directionalTotals(tools);
+  const directionalScore = direction === "LONG" ? long : short;
+  const opposingScore = direction === "LONG" ? short : long;
+  const directionalVotes = direction === "LONG" ? longVotes : shortVotes;
+  const opposingVotes = direction === "LONG" ? shortVotes : longVotes;
+
+  if (directionalScore < 80 || directionalVotes < 8) return false;
+  if (opposingScore > 10 || opposingVotes > 1) return false;
+
+  if (btcRegime === "Bullish" && direction !== "LONG") return false;
+  if (btcRegime === "Bearish" && direction !== "SHORT") return false;
+
+  // Do not chase a large candle / already-extended move.
+  if (currentRangePercent > 2.25) return false;
+  if (direction === "LONG" && (change15m <= 0 || change15m > 1.8 || change1h <= 0 || change1h > 5.5)) return false;
+  if (direction === "SHORT" && (change15m >= 0 || change15m < -1.8 || change1h >= 0 || change1h < -5.5)) return false;
+
+  if (atrPercent === null || atrPercent < 0.25 || atrPercent > 2.5) return false;
+  if (spreadBps === null || spreadBps > 10) return false;
+  if (volumeSpike < 1.20) return false;
+
+  const srFavorable = direction === "LONG"
+    ? (supportDistance <= 1.5 && supportDistance < resistanceDistance)
+    : (resistanceDistance <= 1.5 && resistanceDistance < supportDistance);
+  const breakoutConfirmed = direction === "LONG" ? breakoutLong : breakoutShort;
+  const volumeConfirmed = tools["Volume Pressure"]?.bias === direction || tools["Volume Spike"]?.bias === direction;
+
+  if (!srFavorable && !breakoutConfirmed) return false;
+  if (!volumeConfirmed) return false;
+
+  return true;
 }
 
 function getEntryStatus(
@@ -584,6 +714,20 @@ function majorLevels(price: number, c15: Candle[], c1h: Candle[], c4h: Candle[])
   };
 }
 
+function shortTermStructure(candles: Candle[]) {
+  if (candles.length < 16) return { long: false, short: false };
+  const recent = candles.slice(-6);
+  const previous = candles.slice(-12, -6);
+  const recentHigh = Math.max(...recent.map((c) => c.high));
+  const recentLow = Math.min(...recent.map((c) => c.low));
+  const previousHigh = Math.max(...previous.map((c) => c.high));
+  const previousLow = Math.min(...previous.map((c) => c.low));
+  return {
+    long: recentHigh > previousHigh && recentLow >= previousLow,
+    short: recentLow < previousLow && recentHigh <= previousHigh,
+  };
+}
+
 function volumePressureTool(candle: Candle, averageQuoteVolume: number): ToolResult {
   const range = Math.max(candle.high - candle.low, candle.close * 0.000001);
   const body = candle.close - candle.open;
@@ -614,6 +758,16 @@ export async function GET() {
   try {
     const { windowId, scanId } = windowMeta();
 
+    // Database snapshot is the source of truth so every user gets the exact
+    // same coins, scores, direction, levels and timestamps for a scan window.
+    const sharedSnapshot = await readSharedSnapshot(windowId);
+    if (sharedSnapshot) {
+      scanCache = { windowId, data: sharedSnapshot };
+      return NextResponse.json(sharedSnapshot);
+    }
+
+    // Local process cache is only a fast fallback before the shared snapshot
+    // is written. It is never preferred over the shared source of truth.
     if (scanCache && scanCache.windowId === windowId) {
       return NextResponse.json(scanCache.data);
     }
@@ -746,6 +900,7 @@ export async function GET() {
           }
 
           const atrPercent = atrValue !== null && current.close > 0 ? (atrValue / current.close) * 100 : null;
+          const currentRangePercent = current.close > 0 ? ((current.high - current.low) / current.close) * 100 : 0;
           const distanceToSupport = current.close > 0 ? ((current.close - support) / current.close) * 100 : 0;
           const distanceToResistance = current.close > 0 ? ((resistance - current.close) / current.close) * 100 : 0;
 
@@ -754,6 +909,9 @@ export async function GET() {
           const previousLow = Math.min(...previousStructure15.map((c) => c.low));
           const breakoutLong = current.close > previousHigh && current.quoteVolume >= averageVolume * 1.2 && current.close > previous.close;
           const breakoutShort = current.close < previousLow && current.quoteVolume >= averageVolume * 1.2 && current.close < previous.close;
+
+          const structure15 = shortTermStructure(c15);
+          const structure1h = shortTermStructure(c1h);
 
           const tools: Record<string, ToolResult> = {};
           const emaBull15 = current.close > ema9 && ema9 > ema21 && ema21 > ema50 && ema9Slope15 > 0 && ema21Slope15 > 0;
@@ -790,10 +948,10 @@ export async function GET() {
             "Confirmed structure breakdown",
           );
           tools["Market Structure"] = binaryDirection(
-            current.close > ema21 && change15m > 0 && change1h > 0 && current.close < resistance,
-            current.close < ema21 && change15m < 0 && change1h < 0 && current.close > support,
-            "15m + 1h bullish structure",
-            "15m + 1h bearish structure",
+            structure15.long && structure1h.long && current.close > ema21 && change15m > 0 && change1h > 0,
+            structure15.short && structure1h.short && current.close < ema21 && change15m < 0 && change1h < 0,
+            "15m + 1h higher-high / higher-low structure",
+            "15m + 1h lower-high / lower-low structure",
           );
           tools["BTC Confirmation"] = binaryDirection(
             btcBull && change1h > 0 && current.close > ema21,
@@ -810,8 +968,8 @@ export async function GET() {
             `Major resistance ${distanceToResistance.toFixed(2)}% away`,
           );
           tools["Trend Strength"] = binaryDirection(
-            adxValue !== null && adx1hValue !== null && adxValue >= 20 && adx1hValue >= 20 && ema21Slope15 > 0,
-            adxValue !== null && adx1hValue !== null && adxValue >= 20 && adx1hValue >= 20 && ema21Slope15 < 0,
+            adxValue !== null && adx1hValue !== null && adxValue >= 22 && adx1hValue >= 22 && ema21Slope15 > 0,
+            adxValue !== null && adx1hValue !== null && adxValue >= 22 && adx1hValue >= 22 && ema21Slope15 < 0,
             `ADX ${adxValue?.toFixed(1)} / 1h ${adx1hValue?.toFixed(1)} bullish`,
             `ADX ${adxValue?.toFixed(1)} / 1h ${adx1hValue?.toFixed(1)} bearish`,
           );
@@ -865,6 +1023,7 @@ export async function GET() {
             change1h,
             volumeSpike,
             incomingVolume: current.quoteVolume,
+            currentRangePercent,
             rsi: rsiValue,
             atrPercent,
             support,
@@ -886,11 +1045,28 @@ export async function GET() {
         }
       });
 
-    const data = rows
+    const validRows = rows
       .filter((row): row is SignalRow => row !== null)
+      .filter((row) => passesHardScalpFilter({
+        direction: row.direction,
+        score: row.score,
+        tools: row.tools,
+        atrPercent: row.atrPercent,
+        spreadBps: row.spreadBps,
+        change15m: row.change15m,
+        change1h: row.change1h,
+        volumeSpike: row.volumeSpike,
+        currentRangePercent: row.currentRangePercent,
+        btcRegime,
+        breakoutLong: row.tools.Breakout?.bias === "LONG" && row.tools.Breakout?.score === 10,
+        breakoutShort: row.tools.Breakout?.bias === "SHORT" && row.tools.Breakout?.score === 10,
+        supportDistance: row.supportDistance,
+        resistanceDistance: row.resistanceDistance,
+      }))
       .sort((a, b) => b.score - a.score)
-      .filter((row) => row.score >= 80 && row.direction !== "NEUTRAL")
-      .slice(0, 24);
+      .slice(0, 12);
+
+    const data = validRows;
 
     const nextScanAt = new Date((windowId + 1) * 30 * 60 * 1000).toISOString();
     const windowStartAt = new Date(windowId * 30 * 60 * 1000).toISOString();
@@ -905,8 +1081,9 @@ export async function GET() {
       rows: data,
     };
 
-    scanCache = { windowId, data: response };
-    return NextResponse.json(response);
+    const canonical = await publishCanonicalSnapshot(windowId, response);
+    scanCache = { windowId, data: canonical };
+    return NextResponse.json(canonical);
   } catch (error) {
     return NextResponse.json(
       {
