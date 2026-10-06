@@ -473,6 +473,11 @@ function Signals({
     capturedAt: string;
     tools: Record<string, ToolResult>;
     reasons: string[];
+    support: number;
+    resistance: number;
+    atrPercent: number | null;
+    invalidation: number | null;
+    riskLevel: "Low" | "Moderate" | "High" | "Extreme";
   };
 
   type HistoryRow = {
@@ -507,6 +512,13 @@ function Signals({
     if (score >= 100) return "Valid";
     if (score >= 80) return "Observe";
     return "Ignore";
+  };
+
+  const riskLevelFor = (signal: SignalRow) => {
+    if (signal.status === "Extended / Pumped") return "Extreme" as const;
+    if (signal.atrPercent !== null && signal.atrPercent >= 3) return "High" as const;
+    if (signal.atrPercent !== null && signal.atrPercent >= 1.5) return "Moderate" as const;
+    return "Low" as const;
   };
 
   const formatPrice = (value: number) => {
@@ -1114,6 +1126,91 @@ function Signals({
                           " · "
                         )}
                       </div>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: "12px",
+                        padding: "11px",
+                        borderRadius: "10px",
+                        background: "rgba(239,35,60,.035)",
+                        border: "1px solid rgba(239,35,60,.12)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: "#999",
+                          fontSize: "9px",
+                          textTransform: "uppercase",
+                          letterSpacing: "1px",
+                          marginBottom: "7px",
+                        }}
+                      >
+                        Trade context · not an entry
+                      </div>
+
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                          gap: "8px",
+                        }}
+                      >
+                        <div>
+                          <span className="muted">Current</span>
+                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
+                            {formatPrice(signal.price)}
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">Risk</span>
+                          <b
+                            style={{
+                              display: "block",
+                              marginTop: "3px",
+                              color: signal.riskLevel === "Extreme" || signal.riskLevel === "High" ? "#ff6476" : signal.riskLevel === "Moderate" ? "#f3b86b" : "#65e397",
+                            }}
+                          >
+                            {signal.riskLevel}
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">Support</span>
+                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
+                            {formatPrice(signal.support)}
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">Resistance</span>
+                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
+                            {formatPrice(signal.resistance)}
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">Invalidation</span>
+                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
+                            {signal.invalidation === null ? "N/A" : formatPrice(signal.invalidation)}
+                          </b>
+                        </div>
+
+                        <div>
+                          <span className="muted">ATR</span>
+                          <b className="mono" style={{ display: "block", marginTop: "3px" }}>
+                            {signal.atrPercent === null ? "N/A" : `${signal.atrPercent.toFixed(2)}%`}
+                          </b>
+                        </div>
+                      </div>
+
+                      <p
+                        className="muted"
+                        style={{ margin: "9px 0 0", lineHeight: 1.5 }}
+                      >
+                        Score measures setup alignment only. It does not create a guaranteed entry.
+                      </p>
                     </div>
 
                     <details
