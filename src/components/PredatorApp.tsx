@@ -1,6 +1,6 @@
  "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode, CSSProperties, ChangeEvent, MouseEvent } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
@@ -2990,22 +2990,195 @@ function SettingsPage({ user, onLogout, onProfileNameChange }: { user: User; onL
 
 function ThemeToggle(){const [dark,setDark]=useState(true);useEffect(()=>{const saved=typeof window!=="undefined"?localStorage.getItem("predator-theme"):null;const next=saved? saved==="dark" : true;setDark(next);document.documentElement.dataset.theme=next?"dark":"light"},[]);useEffect(()=>{document.documentElement.dataset.theme=dark?"dark":"light";if(typeof window!=="undefined")localStorage.setItem("predator-theme",dark?"dark":"light")},[dark]);return <button className="icon-btn" onClick={()=>setDark((v: boolean)=>!v)}>{dark?<Moon size={17}/>:<Sun size={17}/>}</button>}
 
+const TAB_HASH: Record<Tab, string> = {
+  "Dashboard": "dashboard",
+  "Signal": "signal",
+  "Volume Spike": "volume-spike",
+  "BTC Report": "btc-report",
+  "Portfolio": "portfolio",
+  "Calculator": "calculator",
+  "Settings": "settings",
+};
+
+function tabFromHash(hash: string): Tab {
+  const normalized = hash.replace(/^#/, "").toLowerCase();
+  const match = (Object.entries(TAB_HASH) as Array<[Tab, string]>).find(([, value]) => value === normalized);
+  return match?.[0] ?? "Dashboard";
+}
+
 export default function PredatorApp({ user }: { user: User }){
-  const [tab,setTab]=useState<Tab>("Dashboard");
+  const [tab,setTab]=useState<Tab>(() =>
+    typeof window === "undefined" ? "Dashboard" : tabFromHash(window.location.hash),
+  );
   const [collapsed,setCollapsed]=useState(false);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [profileName, setProfileName] = useState(() => getDisplayName(user));
+  const [navigationBusy, setNavigationBusy] = useState(false);
+  const navigationTimer = useRef<number | null>(null);
   const displayName = profileName;
   const avatar = getAvatar(user);
+
+  const clearNavigationTimer = useCallback(() => {
+    if (navigationTimer.current !== null) {
+      window.clearTimeout(navigationTimer.current);
+      navigationTimer.current = null;
+    }
+  }, []);
+
+  const navigateTo = useCallback((nextTab: Tab, options?: { replace?: boolean }) => {
+    if (nextTab === tab) {
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem("predator-last-tab", nextTab);
+      }
+      return;
+    }
+
+    clearNavigationTimer();
+    setNavigationBusy(true);
+
+    navigationTimer.current = window.setTimeout(() => {
+      setTab(nextTab);
+
+      if (typeof window !== "undefined") {
+        const nextHash = `#${TAB_HASH[nextTab]}`;
+        const method = options?.replace ? "replaceState" : "pushState";
+        window.history[method]({ tab: nextTab }, "", nextHash);
+        window.sessionStorage.setItem("predator-last-tab", nextTab);
+      }
+
+      navigationTimer.current = window.setTimeout(() => {
+        setNavigationBusy(false);
+        navigationTimer.current = null;
+      }, 180);
+    }, 85);
+  }, [clearNavigationTimer, tab]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const nextTab = tabFromHash(window.location.hash);
+      clearNavigationTimer();
+      setNavigationBusy(true);
+      window.setTimeout(() => {
+        setTab(nextTab);
+        window.sessionStorage.setItem("predator-last-tab", nextTab);
+        window.setTimeout(() => setNavigationBusy(false), 180);
+      }, 70);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      clearNavigationTimer();
+    };
+  }, [clearNavigationTimer]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem("predator-last-tab", tab);
+    if (!window.location.hash) {
+      window.history.replaceState({ tab }, "", `#${TAB_HASH[tab]}`);
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    // Subtle press/hover feedback for all interactive buttons and the home logo.
+    // This is intentionally global so existing buttons across every tab feel consistent.
+    const root = document.querySelector(".app");
+    if (!root) return;
+
+    const onPointerDown = (event: Event) => {
+      const target = event.target as HTMLElement | null;
+      const control = target?.closest("button, .logo-link") as HTMLElement | null;
+      if (!control || (control instanceof HTMLButtonElement && control.disabled)) return;
+      control.classList.add("predator-press");
+    };
+
+    const onPointerUp = () => {
+      root.querySelectorAll(".predator-press").forEach((node) => node.classList.remove("predator-press"));
+    };
+
+    root.addEventListener("pointerdown", onPointerDown);
+    root.addEventListener("pointerup", onPointerUp);
+    root.addEventListener("pointercancel", onPointerUp);
+    root.addEventListener("pointerleave", onPointerUp, true);
+
+    return () => {
+      root.removeEventListener("pointerdown", onPointerDown);
+      root.removeEventListener("pointerup", onPointerUp);
+      root.removeEventListener("pointercancel", onPointerUp);
+      root.removeEventListener("pointerleave", onPointerUp, true);
+    };
+  }, []);
 
   const logout = async () => {
     if (supabase) {
       await supabase.auth.signOut();
     }
   };
-  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>;case"Signal":return <Signals user={user} onCoinClick={setSelectedSymbol}/>;case"Volume Spike":return <VolumeSpike onCoinClick={setSelectedSymbol}/>;case"BTC Report":return <BTCReport onCoinClick={setSelectedSymbol}/>;case"Portfolio":return <Portfolio user={user}/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>}},[tab]);
+
+  const openCoin = useCallback((symbol: string) => {
+    setSelectedSymbol(symbol);
+  }, []);
+
+  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={navigateTo} onCoinClick={openCoin}/>;case"Signal":return <Signals user={user} onCoinClick={openCoin}/>;case"Volume Spike":return <VolumeSpike onCoinClick={openCoin}/>;case"BTC Report":return <BTCReport onCoinClick={openCoin}/>;case"Portfolio":return <Portfolio user={user}/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={navigateTo} onCoinClick={openCoin}/>}},[navigateTo, openCoin, tab, user]);
+
   return <div className={"app "+(collapsed?"collapsed":"")}>
-    <aside className="sidebar"><div onClick={()=>setTab("Dashboard")} className="logo-link"><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>setTab(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
-    <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><button className="icon-btn" aria-label="Notifications"><Bell size={17}/></button><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className="content">{content}</div></main>{selectedSymbol ? <CoinDetails symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} /> : null}
+    <style>{`
+      .app button, .app .logo-link {
+        transition: transform 170ms cubic-bezier(.2,.8,.2,1), filter 170ms ease, opacity 170ms ease, box-shadow 170ms ease, background-color 170ms ease, border-color 170ms ease;
+        will-change: transform;
+      }
+      .app button:not(:disabled):hover, .app .logo-link:hover {
+        filter: brightness(1.06);
+      }
+      .app button.predator-press, .app .logo-link.predator-press {
+        transform: translateY(1px) scale(.975);
+        filter: brightness(.96);
+      }
+      .predator-page-frame {
+        animation: predatorPageIn 280ms cubic-bezier(.22,.61,.36,1) both;
+        transform-origin: top center;
+      }
+      .predator-content-wrap {
+        position: relative;
+        transition: opacity 180ms ease, transform 220ms ease, filter 180ms ease;
+      }
+      .predator-content-wrap.is-transitioning {
+        opacity: .56;
+        transform: translateY(4px) scale(.998);
+        filter: blur(.2px);
+      }
+      .predator-route-indicator {
+        position: fixed;
+        top: 0;
+        left: 50%;
+        width: 110px;
+        height: 2px;
+        transform: translateX(-50%);
+        border-radius: 999px;
+        background: linear-gradient(90deg, transparent, rgba(255,72,92,.95), transparent);
+        box-shadow: 0 0 16px rgba(255,72,92,.35);
+        animation: predatorRoutePulse 1s ease-in-out infinite;
+        z-index: 9999;
+        pointer-events: none;
+      }
+      @keyframes predatorPageIn {
+        from { opacity: 0; transform: translateY(5px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes predatorRoutePulse {
+        0%, 100% { opacity: .35; width: 80px; }
+        50% { opacity: 1; width: 150px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .app button, .app .logo-link, .predator-content-wrap, .predator-page-frame, .predator-route-indicator {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    `}</style>
+    {navigationBusy ? <div className="predator-route-indicator" aria-hidden="true" /> : null}
+    <aside className="sidebar"><div onClick={()=>navigateTo("Dashboard")} className="logo-link" role="button" tabIndex={0}><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>navigateTo(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
+    <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><button className="icon-btn" aria-label="Notifications"><Bell size={17}/></button><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className={"content predator-content-wrap "+(navigationBusy?"is-transitioning":"")}><div key={tab} className="predator-page-frame">{content}</div></div></main>{selectedSymbol ? <CoinDetails symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} /> : null}
   </div>
 }
