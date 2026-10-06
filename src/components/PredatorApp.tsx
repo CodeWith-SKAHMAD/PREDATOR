@@ -2536,11 +2536,6 @@ function CalculatorPage() {
     return sign + formattedInteger + (parts.length > 1 ? `.${parts[1]}` : "");
   };
 
-  const commitValue = (value: string) => {
-    setDisplay(value || "0");
-    setExpression(value === "0" ? "" : value);
-  };
-
   const evaluateExpression = (value: string) => {
     const sanitized = value.replace(/×/g, "*").replace(/÷/g, "/").replace(/,/g, "");
     if (!sanitized || !/^[0-9+\-*/%.() ]+$/.test(sanitized)) return null;
@@ -2569,16 +2564,8 @@ function CalculatorPage() {
         return;
       }
       const next = expression.slice(0, -1);
-      commitValue(next);
-      return;
-    }
-
-    if (key === "±") {
-      const current = display.replace(/,/g, "");
-      if (!current || current === "0") return;
-      const toggled = current.startsWith("-") ? current.slice(1) : `-${current}`;
-      setDisplay(toggled);
-      setExpression(toggled);
+      setExpression(next);
+      setDisplay(next || "0");
       return;
     }
 
@@ -2595,22 +2582,23 @@ function CalculatorPage() {
       return;
     }
 
-    const isOperator = ["+", "-", "×", "÷"].includes(key);
-    if (justEvaluated && !isOperator) {
-      setExpression(key === "." ? "0." : key);
-      setDisplay(key === "." ? "0." : key);
-      setJustEvaluated(false);
-      return;
-    }
-
     if (key === "%") {
       const current = evaluateExpression(expression);
       if (current !== null) {
-        const value = Number(current) / 100;
-        const next = String(Number(value.toFixed(12)));
+        const next = String(Number((Number(current) / 100).toFixed(12)));
         setExpression(next);
         setDisplay(next);
+        setJustEvaluated(false);
       }
+      return;
+    }
+
+    const isOperator = ["+", "-", "×", "÷"].includes(key);
+    if (justEvaluated && !isOperator) {
+      const next = key === "." ? "0." : key;
+      setExpression(next);
+      setDisplay(next);
+      setJustEvaluated(false);
       return;
     }
 
@@ -2618,7 +2606,7 @@ function CalculatorPage() {
       const trimmed = expression.replace(/[+\-×÷]+$/, "");
       const next = `${trimmed}${key}`;
       setExpression(next);
-      setDisplay(next);
+      setDisplay(next || "0");
       setJustEvaluated(false);
       return;
     }
@@ -2626,6 +2614,7 @@ function CalculatorPage() {
     if (key === ".") {
       const currentNumber = expression.split(/[+\-×÷]/).pop() || "";
       if (currentNumber.includes(".")) return;
+      if (!expression || isOperator && expression.endsWith(key)) return;
     }
 
     const next = expression === "0" ? key : expression + key;
@@ -2663,31 +2652,28 @@ function CalculatorPage() {
 
   const converted = rate === null ? null : amount * rate;
   const percentageResult = main * percent / 100;
-
   const calcKeys = [
     ["AC", "⌫", "%", "÷"],
     ["7", "8", "9", "×"],
     ["4", "5", "6", "-"],
     ["1", "2", "3", "+"],
-    ["±", "0", ".", "="],
+    ["0", ".", "(", ")"],
+    ["="],
   ];
 
-  const buttonStyle = (key: string): CSSProperties => {
+  const keyStyle = (key: string): CSSProperties => {
     const operator = ["÷", "×", "-", "+", "="].includes(key);
-    const utility = ["AC", "⌫", "%", "±"].includes(key);
+    const utility = ["AC", "⌫", "%"].includes(key);
     return {
-      minHeight: "64px",
-      width: "100%",
-      borderRadius: "999px",
-      border: operator ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(255,255,255,0.06)",
-      background: operator ? (key === "=" ? "#ff9f0a" : "#ff9f0a") : utility ? "#a5a5a5" : "#333333",
-      color: operator ? "#ffffff" : utility ? "#111111" : "#ffffff",
-      fontSize: "22px",
+      minHeight: "58px",
+      borderRadius: "12px",
+      border: "1px solid rgba(255,255,255,0.08)",
+      background: operator ? "rgba(255,60,80,0.16)" : utility ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.045)",
+      color: operator ? "#ff6678" : "#ededed",
+      fontSize: "19px",
       fontWeight: 700,
-      fontFamily: "Inter, sans-serif",
       cursor: "pointer",
-      boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.02)",
-      transition: "transform 100ms ease, filter 120ms ease",
+      transition: "transform 100ms ease, background 120ms ease",
     };
   };
 
@@ -2695,47 +2681,34 @@ function CalculatorPage() {
     <div className="page">
       <div className="page-head">
         <div>
-          <p className="eyebrow">TOOLS</p>
           <h1>Calculator</h1>
-          <p className="muted">Trading math, normal calculator and live EUR / USD / BDT conversion.</p>
         </div>
       </div>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(0, 1.35fr) minmax(320px, 0.65fr)",
-          gap: "18px",
+          gridTemplateColumns: "minmax(0, 1.25fr) minmax(300px, 0.75fr)",
+          gap: "16px",
           alignItems: "start",
         }}
       >
         <Card>
-          <div
-            style={{
-              width: "100%",
-              maxWidth: "500px",
-              margin: "0 auto",
-              padding: "2px 0 0",
-            }}
-          >
+          <div style={{ maxWidth: "560px", margin: "0 auto" }}>
             <div
-              className="result mono"
+              className="mono"
               style={{
-                minHeight: "96px",
+                minHeight: "88px",
                 display: "flex",
                 alignItems: "flex-end",
                 justifyContent: "flex-end",
                 overflow: "auto",
                 whiteSpace: "nowrap",
-                padding: "10px 4px 10px",
-                marginTop: "0",
-                background: "transparent",
-                border: "0",
-                fontSize: display.length > 12 ? "34px" : "52px",
+                padding: "6px 4px 14px",
+                fontSize: display.length > 13 ? "32px" : "46px",
                 lineHeight: 1,
-                fontWeight: 500,
-                color: "#f2f2f7",
-                letterSpacing: "-0.03em",
+                color: "#f2f2f2",
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
               }}
               aria-live="polite"
             >
@@ -2746,21 +2719,20 @@ function CalculatorPage() {
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: "10px",
-                marginTop: "4px",
-                width: "100%",
+                gap: "9px",
+                marginTop: "12px",
               }}
             >
-              {calcKeys.flat().map((key) => (
+              {calcKeys.slice(0, 5).flat().map((key) => (
                 <button
                   key={key}
                   type="button"
                   aria-label={key}
                   className="calculator-key"
-                  style={buttonStyle(key)}
+                  style={keyStyle(key)}
                   onClick={() => pushCalc(key)}
                   onMouseDown={(event: MouseEvent<HTMLButtonElement>) => {
-                    event.currentTarget.style.transform = "scale(0.97)";
+                    event.currentTarget.style.transform = "scale(0.98)";
                   }}
                   onMouseUp={(event: MouseEvent<HTMLButtonElement>) => {
                     event.currentTarget.style.transform = "scale(1)";
@@ -2772,98 +2744,48 @@ function CalculatorPage() {
                   {key}
                 </button>
               ))}
+              <button
+                type="button"
+                aria-label="equals"
+                className="glass-btn"
+                style={{ minHeight: "58px", borderRadius: "12px", justifyContent: "center", fontSize: "19px", fontWeight: 700 }}
+                onClick={() => pushCalc("=")}
+              >
+                =
+              </button>
             </div>
-
           </div>
         </Card>
 
         <div style={{ display: "grid", gap: "14px" }}>
           <Card>
-            <span className="label">PERCENTAGE</span>
-            <h2>Percentage calculator</h2>
+            <div className="card-head"><h2>Percentage</h2></div>
             <div className="form-grid">
-              <label>
-                Main data
-                <input
-                  type="number"
-                  value={main}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMain(Number(e.target.value) || 0)}
-                />
-              </label>
-              <label>
-                % input
-                <input
-                  type="number"
-                  value={percent}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setPercent(Number(e.target.value) || 0)}
-                />
-              </label>
+              <label>Main<input type="number" value={main} onChange={(e: ChangeEvent<HTMLInputElement>) => setMain(Number(e.target.value) || 0)} /></label>
+              <label>%<input type="number" value={percent} onChange={(e: ChangeEvent<HTMLInputElement>) => setPercent(Number(e.target.value) || 0)} /></label>
             </div>
-            <div className="result mono" style={{ fontSize: "30px", marginTop: "12px" }}>
-              {percentageResult.toFixed(2)}
-            </div>
+            <div className="result mono" style={{ fontSize: "28px", marginTop: "10px" }}>{percentageResult.toFixed(2)}</div>
           </Card>
 
           <Card>
             <div className="card-head">
-              <div>
-                <span className="label">CURRENCY</span>
-                <h2>Live converter</h2>
-              </div>
-              <span className="muted">{rateLoading ? "Updating…" : "Live rate"}</span>
+              <h2>Currency</h2>
+              <span className="muted">{rateLoading ? "Updating…" : "Live"}</span>
             </div>
-
             <div className="form-grid">
-              <label>
-                Amount
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => setAmount(Number(e.target.value) || 0)}
-                />
-              </label>
-              <label>
-                From
-                <select value={from} onChange={(e: ChangeEvent<HTMLSelectElement>) => setFrom(e.target.value)}>
-                  <option>EUR</option>
-                  <option>USD</option>
-                  <option>BDT</option>
-                </select>
-              </label>
-              <label>
-                To
-                <select value={to} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTo(e.target.value)}>
-                  <option>USD</option>
-                  <option>EUR</option>
-                  <option>BDT</option>
-                </select>
-              </label>
+              <label>Amount<input type="number" value={amount} onChange={(e: ChangeEvent<HTMLInputElement>) => setAmount(Number(e.target.value) || 0)} /></label>
+              <label>From<select value={from} onChange={(e: ChangeEvent<HTMLSelectElement>) => setFrom(e.target.value)}><option>EUR</option><option>USD</option><option>BDT</option></select></label>
+              <label>To<select value={to} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTo(e.target.value)}><option>USD</option><option>EUR</option><option>BDT</option></select></label>
             </div>
-
-            <div className="result mono" style={{ fontSize: "28px", marginTop: "12px" }}>
+            <div className="result mono" style={{ fontSize: "24px", marginTop: "10px" }}>
               {converted === null ? (rateError || "N/A") : `${converted.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${to}`}
             </div>
-
-            <p className="muted" style={{ marginTop: "8px" }}>
-              Rate source: public exchange-rate feed. If unavailable, the calculator shows N/A instead of a fake rate.
-            </p>
           </Card>
         </div>
       </div>
-
-      <style jsx>{`
-        .calculator-key:hover { filter: brightness(1.08); }
-        @media (max-width: 1100px) {
-          .calculator-key { min-height: 70px !important; }
-        }
-        @media (max-width: 760px) {
-          .calculator-key { min-height: 62px !important; font-size: 21px !important; }
-        }
-      `}</style>
     </div>
   );
 }
-
 function CoinDetails({ symbol, onClose }: { symbol: string; onClose: () => void }) {
   const title = symbol.replace("USDT", "/USDT");
 
