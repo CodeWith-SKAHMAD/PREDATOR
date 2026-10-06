@@ -71,16 +71,9 @@ type FundingRow = {
   fundingRate: string;
 };
 
-type OiHistoryRow = {
+type PremiumIndexRow = {
   symbol: string;
-  sumOpenInterest?: string;
-  sumOpenInterestValue?: string;
-  timestamp: number;
-};
-
-type OiCurrentRow = {
-  symbol: string;
-  openInterest: string;
+  lastFundingRate?: string;
 };
 
 type Candle = {
@@ -126,9 +119,6 @@ type SignalRow = {
   incomingVolume: number;
   rsi: number | null;
   funding: number | null;
-  openInterest: number | null;
-  openInterestUsd: number | null;
-  openInterestChange: number | null;
   atrPercent: number | null;
   support: number;
   supportDistance: number;
@@ -410,13 +400,29 @@ function atrTool(atrPercent: number | null): ToolResult {
   return tool(0, `ATR ${atrPercent.toFixed(2)}% outside range`, "NEUTRAL");
 }
 
-function oiTool(oiChange: number | null, priceChange: number, ema21: number, price: number): ToolResult {
-  if (oiChange === null) return tool(0, "OI change unavailable", "NEUTRAL");
+function marketStructureTool(
+  price: number,
+  support: number,
+  resistance: number,
+  ema21: number,
+  change15m: number,
+): ToolResult {
+  const range = resistance - support;
+  if (range <= 0) return tool(0, "Structure unavailable", "NEUTRAL");
 
-  if (oiChange >= 1 && priceChange > 0 && price > ema21) return tool(10, `OI +${oiChange.toFixed(1)}% with price`, "LONG");
-  if (oiChange >= 1 && priceChange < 0 && price < ema21) return tool(10, `OI +${oiChange.toFixed(1)}% with price`, "SHORT");
-  return tool(0, `OI ${oiChange >= 0 ? "+" : ""}${oiChange.toFixed(1)}%`, "NEUTRAL");
+  const position = (price - support) / range;
+
+  if (price > ema21 && change15m > 0 && position >= 0.35 && position <= 0.82) {
+    return tool(10, "Bullish structure with room", "LONG");
+  }
+
+  if (price < ema21 && change15m < 0 && position >= 0.18 && position <= 0.65) {
+    return tool(10, "Bearish structure with room", "SHORT");
+  }
+
+  return tool(0, "No clean structure confirmation", "NEUTRAL");
 }
+
 
 function getStatus(score: number): string {
   if (score >= 120) return "Extended / Pumped";
@@ -483,15 +489,31 @@ async function getKlines(symbol: string, interval: "15m" | "1h", limit: number) 
   return toClosedCandles(rows);
 }
 
-async function getFundingForSymbol(symbol: string, globalValue: string | undefined): Promise<number | null> {
+async function getFundingForSymbol(
+  symbol: string,
+  globalValue: string | undefined,
+): Promise<number | null> {
   if (globalValue !== undefined) {
     const value = Number(globalValue);
     if (Number.isFinite(value)) return value;
   }
 
+  // Prefer the single-symbol premium-index endpoint. It is the most direct
+  // public source for the latest perpetual funding rate.
+  const premium = await safeFetch<PremiumIndexRow>(
+    FUTURES_BASES,
+    `/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`,
+  );
+
+  if (premium?.lastFundingRate !== undefined) {
+    const parsed = Number(premium.lastFundingRate);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  // Fallback to the public funding-rate history endpoint.
   const latest = await safeFetch<FundingRow[]>(
     FUTURES_BASES,
-    `/fapi/v1/fundingRate?symbol=${symbol}&limit=1`,
+    `/fapi/v1/fundingRate?symbol=${encodeURIComponent(symbol)}&limit=1`,
   );
 
   const value = latest?.[0]?.fundingRate;
@@ -501,40 +523,6 @@ async function getFundingForSymbol(symbol: string, globalValue: string | undefin
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-async function getOiChangeForSymbol(symbol: string): Promise<{ change: number | null; current: number | null }> {
-  const [historyWithPerpetual, historyDefault, current] = await Promise.all([
-    safeFetch<OiHistoryRow[]>(
-      FUTURES_BASES,
-      `/futures/data/openInterestHist?symbol=${symbol}&period=15m&contractType=PERPETUAL&limit=2`,
-    ),
-    safeFetch<OiHistoryRow[]>(
-      FUTURES_BASES,
-      `/futures/data/openInterestHist?symbol=${symbol}&period=15m&limit=2`,
-    ),
-    safeFetch<OiCurrentRow>(
-      FUTURES_BASES,
-      `/fapi/v1/openInterest?symbol=${symbol}`,
-    ),
-  ]);
-
-  const history = (historyWithPerpetual && historyWithPerpetual.length >= 2
-    ? historyWithPerpetual
-    : historyDefault && historyDefault.length >= 2
-      ? historyDefault
-      : null);
-
-  let change: number | null = null;
-  if (history) {
-    const first = Number(history[0].sumOpenInterestValue ?? history[0].sumOpenInterest);
-    const last = Number(history[history.length - 1].sumOpenInterestValue ?? history[history.length - 1].sumOpenInterest);
-    if (first > 0 && Number.isFinite(first) && Number.isFinite(last)) {
-      change = ((last - first) / first) * 100;
-    }
-  }
-
-  const currentValue = current?.openInterest !== undefined ? Number(current.openInterest) : null;
-  return { change, current: currentValue !== null && Number.isFinite(currentValue) ? currentValue : null };
-}
 
 export async function GET() {
   try {
@@ -548,7 +536,7 @@ export async function GET() {
       fetchJson<{ symbols: SpotSymbol[] }>(SPOT_BASES, "/api/v3/exchangeInfo"),
       fetchJson<Ticker[]>(SPOT_BASES, "/api/v3/ticker/24hr"),
       safeFetch<BookTicker[]>(SPOT_BASES, "/api/v3/ticker/bookTicker"),
-      safeFetch<FundingRow[]>(FUTURES_BASES, "/fapi/v1/premiumIndex"),
+      safeFetch<PremiumIndexRow[]>(FUTURES_BASES, "/fapi/v1/premiumIndex"),
     ]);
 
     const tradable = exchangeInfo.symbols
@@ -562,7 +550,7 @@ export async function GET() {
 
     const tickerMap = new Map(tickers.map((item) => [item.symbol, item]));
     const bookMap = new Map((books ?? []).map((item) => [item.symbol, item]));
-    const fundingMap = new Map((fundingAll ?? []).map((item) => [item.symbol, item]));
+    const fundingMap = new Map((fundingAll ?? []).map((item) => [item.symbol, item.lastFundingRate]));
 
     const candidates = tradable
       .map((symbol) => {
@@ -609,11 +597,10 @@ export async function GET() {
     const rows = await Promise.all(
       candidates.map(async (candidate): Promise<SignalRow | null> => {
         try {
-          const [raw15m, raw1h, oiData, funding] = await Promise.all([
+          const [raw15m, raw1h, funding] = await Promise.all([
             safeFetch<Kline[]>(SPOT_BASES, `/api/v3/klines?symbol=${candidate.symbol}&interval=15m&limit=121`),
             safeFetch<Kline[]>(SPOT_BASES, `/api/v3/klines?symbol=${candidate.symbol}&interval=1h&limit=121`),
-            getOiChangeForSymbol(candidate.symbol),
-            getFundingForSymbol(candidate.symbol, fundingMap.get(candidate.symbol)?.fundingRate),
+            getFundingForSymbol(candidate.symbol, fundingMap.get(candidate.symbol)),
           ]);
 
           if (!raw15m || !raw1h) return null;
@@ -698,7 +685,7 @@ export async function GET() {
             "Confirmed 15m breakout",
             "Confirmed 15m breakdown",
           );
-          tools["OI Change"] = oiTool(oiData.change, candidate.change24h, ema21, current.close);
+          tools["Market Structure"] = marketStructureTool(current.close, support, resistance, ema21, change15m);
           tools.Funding = fundingTool(funding);
           tools["BTC Confirmation"] = binaryDirection(
             btcBull && current.close > ema21 && change1h > 0,
@@ -768,9 +755,6 @@ export async function GET() {
             incomingVolume: current.quoteVolume,
             rsi: rsiValue,
             funding,
-            openInterest: oiData.current,
-            openInterestUsd: oiData.current !== null ? oiData.current * candidate.price : null,
-            openInterestChange: oiData.change,
             atrPercent,
             support,
             supportDistance: distanceToSupport,
