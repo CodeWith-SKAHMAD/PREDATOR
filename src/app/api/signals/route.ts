@@ -111,6 +111,10 @@ type SignalRow = {
   funding: number | null;
   openInterestChange: number | null;
   atrPercent: number | null;
+  support: number;
+  resistance: number;
+  invalidation: number | null;
+  riskLevel: "Low" | "Moderate" | "High" | "Extreme";
   liquidity: number;
   spreadBps: number | null;
   capturedAt: string;
