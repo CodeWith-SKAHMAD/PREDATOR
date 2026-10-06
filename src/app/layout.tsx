@@ -3,9 +3,23 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "PREDATOR — Crypto Intelligence",
-  description: "PREDATOR crypto screener and signal platform"
+  description:
+    "PREDATOR crypto screener and signal platform",
+  icons: {
+    icon: "/predator-logo.png",
+    shortcut: "/predator-logo.png",
+    apple: "/predator-logo.png",
+  },
 };
 
-export default function RootLayout({ children }: Readonly<{children: React.ReactNode}>) {
-  return <html lang="en"><body>{children}</body></html>;
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
 }
