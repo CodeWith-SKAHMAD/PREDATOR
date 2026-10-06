@@ -1,6 +1,23 @@
 import { NextResponse } from "next/server";
 
-const API_BASE = "https://api.binance.com";
+const API_BASES = [
+  "https://data-api.binance.vision",
+  "https://api-gcp.binance.com",
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+  "https://api3.binance.com",
+  "https://api4.binance.com",
+];
+
+const STABLE_ASSETS = new Set([
+  "USDT",
+  "USDC",
+  "FDUSD",
+  "TUSD",
+  "USDE",
+  "DAI",
+  "BUSD",
+]);
 
 type ExchangeSymbol = {
   symbol: string;
@@ -20,34 +37,61 @@ type Ticker24h = {
   lowPrice: string;
 };
 
+async function fetchJson<T>(
+  path: string,
+  timeoutMs = 7000
+): Promise<T> {
+  let lastError = "Market data request failed";
+
+  for (const base of API_BASES) {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      timeoutMs
+    );
+
+    try {
+      const response = await fetch(
+        `${base}${path}`,
+        {
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        }
+      );
+
+      if (!response.ok) {
+        lastError = `Request failed: ${response.status}`;
+        continue;
+      }
+
+      return (await response.json()) as T;
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? error.message
+          : "Market data request failed";
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error(lastError);
+}
+
 export async function GET() {
   try {
-    const [exchangeResponse, tickerResponse] = await Promise.all([
-      fetch(`${API_BASE}/api/v3/exchangeInfo`, {
-        cache: "no-store",
-      }),
-      fetch(`${API_BASE}/api/v3/ticker/24hr`, {
-        cache: "no-store",
-      }),
-    ]);
-
-    if (!exchangeResponse.ok) {
-      throw new Error(
-        `Market metadata request failed: ${exchangeResponse.status}`
-      );
-    }
-
-    if (!tickerResponse.ok) {
-      throw new Error(
-        `Ticker request failed: ${tickerResponse.status}`
-      );
-    }
-
-    const exchangeData = (await exchangeResponse.json()) as {
-      symbols: ExchangeSymbol[];
-    };
-
-    const tickers = (await tickerResponse.json()) as Ticker24h[];
+    const [exchangeData, tickers] =
+      await Promise.all([
+        fetchJson<{ symbols: ExchangeSymbol[] }>(
+          "/api/v3/exchangeInfo"
+        ),
+        fetchJson<Ticker24h[]>(
+          "/api/v3/ticker/24hr"
+        ),
+      ]);
 
     const allowedSymbols = new Set(
       exchangeData.symbols
@@ -55,13 +99,16 @@ export async function GET() {
           (item) =>
             item.status === "TRADING" &&
             item.quoteAsset === "USDT" &&
-            item.isSpotTradingAllowed !== false
+            item.isSpotTradingAllowed !== false &&
+            !STABLE_ASSETS.has(item.baseAsset)
         )
         .map((item) => item.symbol)
     );
 
     const markets = tickers
-      .filter((item) => allowedSymbols.has(item.symbol))
+      .filter((item) =>
+        allowedSymbols.has(item.symbol)
+      )
       .map((item) => ({
         symbol: item.symbol,
         price: Number(item.lastPrice),
@@ -77,16 +124,21 @@ export async function GET() {
           Number.isFinite(item.change24h) &&
           Number.isFinite(item.quoteVolume24h)
       )
-      .sort((a, b) => b.quoteVolume24h - a.quoteVolume24h);
+      .sort(
+        (a, b) =>
+          b.quoteVolume24h -
+          a.quoteVolume24h
+      );
 
-    const btc = markets.find(
-      (item) => item.symbol === "BTCUSDT"
-    );
+    const btc =
+      markets.find(
+        (item) => item.symbol === "BTCUSDT"
+      ) ?? null;
 
     return NextResponse.json({
       ok: true,
       updatedAt: new Date().toISOString(),
-      btc: btc ?? null,
+      btc,
       markets: markets.slice(0, 100),
     });
   } catch (error) {
