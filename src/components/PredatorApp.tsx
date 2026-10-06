@@ -2523,70 +2523,349 @@ function CalculatorPage() {
   const [rate, setRate] = useState<number | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
   const [rateError, setRateError] = useState("");
+  const [justEvaluated, setJustEvaluated] = useState(false);
+
+  const formatCalculatorDisplay = (value: string) => {
+    if (value === "Error") return value;
+    const raw = value.replace(/,/g, "");
+    if (!raw || raw === "-") return raw || "0";
+    const parts = raw.split(".");
+    const sign = parts[0].startsWith("-") ? "-" : "";
+    const integer = parts[0].replace(/^-/, "");
+    const formattedInteger = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ",") || "0";
+    return sign + formattedInteger + (parts.length > 1 ? `.${parts[1]}` : "");
+  };
+
+  const commitValue = (value: string) => {
+    setDisplay(value || "0");
+    setExpression(value === "0" ? "" : value);
+  };
+
+  const evaluateExpression = (value: string) => {
+    const sanitized = value.replace(/×/g, "*").replace(/÷/g, "/").replace(/,/g, "");
+    if (!sanitized || !/^[0-9+\-*/%.() ]+$/.test(sanitized)) return null;
+    try {
+      const result = Function(`"use strict"; return (${sanitized || "0"})`)();
+      const numeric = Number(result);
+      return Number.isFinite(numeric) ? String(Number(numeric.toFixed(12))) : null;
+    } catch {
+      return null;
+    }
+  };
 
   const pushCalc = (key: string) => {
-    if (key === "C") { setExpression(""); setDisplay("0"); return; }
-    if (key === "⌫") { const next = expression.slice(0, -1); setExpression(next); setDisplay(next || "0"); return; }
-    if (key === "=") {
-      if (!/^[0-9+\-*/%.() ]+$/.test(expression)) return;
-      try {
-        // Expression is generated exclusively from calculator keys; reject everything except math characters before evaluation.
-        const value = Function(`"use strict"; return (${expression || "0"})`)();
-        const numeric = Number(value);
-        setDisplay(Number.isFinite(numeric) ? String(Number(numeric.toFixed(12))) : "Error");
-      } catch { setDisplay("Error"); }
+    if (key === "AC") {
+      setExpression("");
+      setDisplay("0");
+      setJustEvaluated(false);
       return;
     }
-    const next = expression + key;
+
+    if (key === "⌫") {
+      if (justEvaluated) {
+        setExpression("");
+        setDisplay("0");
+        setJustEvaluated(false);
+        return;
+      }
+      const next = expression.slice(0, -1);
+      commitValue(next);
+      return;
+    }
+
+    if (key === "±") {
+      const current = display.replace(/,/g, "");
+      if (!current || current === "0") return;
+      const toggled = current.startsWith("-") ? current.slice(1) : `-${current}`;
+      setDisplay(toggled);
+      setExpression(toggled);
+      return;
+    }
+
+    if (key === "=") {
+      const result = evaluateExpression(expression);
+      if (result === null) {
+        setDisplay("Error");
+        setExpression("");
+      } else {
+        setDisplay(result);
+        setExpression(result);
+        setJustEvaluated(true);
+      }
+      return;
+    }
+
+    const isOperator = ["+", "-", "×", "÷"].includes(key);
+    if (justEvaluated && !isOperator) {
+      setExpression(key === "." ? "0." : key);
+      setDisplay(key === "." ? "0." : key);
+      setJustEvaluated(false);
+      return;
+    }
+
+    if (key === "%") {
+      const current = evaluateExpression(expression);
+      if (current !== null) {
+        const value = Number(current) / 100;
+        const next = String(Number(value.toFixed(12)));
+        setExpression(next);
+        setDisplay(next);
+      }
+      return;
+    }
+
+    if (isOperator) {
+      const trimmed = expression.replace(/[+\-×÷]+$/, "");
+      const next = `${trimmed}${key}`;
+      setExpression(next);
+      setDisplay(next);
+      setJustEvaluated(false);
+      return;
+    }
+
+    if (key === ".") {
+      const currentNumber = expression.split(/[+\-×÷]/).pop() || "";
+      if (currentNumber.includes(".")) return;
+    }
+
+    const next = expression === "0" ? key : expression + key;
     setExpression(next);
     setDisplay(next);
+    setJustEvaluated(false);
   };
 
   useEffect(() => {
     let active = true;
     const loadRate = async () => {
-      setRateLoading(true); setRateError("");
+      setRateLoading(true);
+      setRateError("");
       try {
         const payload = await fetchJsonWithFallback<{ rates?: Record<string, number> }>([
           `https://open.er-api.com/v6/latest/${encodeURIComponent(from)}`,
         ]);
-        const r = payload.rates?.[to];
-        if (!Number.isFinite(r)) throw new Error("Rate unavailable");
-        if (active) setRate(Number(r));
+        const nextRate = payload.rates?.[to];
+        if (!Number.isFinite(nextRate)) throw new Error("Rate unavailable");
+        if (active) setRate(Number(nextRate));
       } catch (err) {
-        if (active) { setRate(null); setRateError(err instanceof Error ? err.message : "Rate unavailable"); }
-      } finally { if (active) setRateLoading(false); }
+        if (active) {
+          setRate(null);
+          setRateError(err instanceof Error ? err.message : "Rate unavailable");
+        }
+      } finally {
+        if (active) setRateLoading(false);
+      }
     };
     loadRate();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [from, to]);
 
   const converted = rate === null ? null : amount * rate;
   const percentageResult = main * percent / 100;
 
-  const keys = ["C","⌫","%","/","7","8","9","*","4","5","6","-","1","2","3","+","0",".","(",")","="];
+  const calcKeys = [
+    ["AC", "⌫", "%", "÷"],
+    ["7", "8", "9", "×"],
+    ["4", "5", "6", "-"],
+    ["1", "2", "3", "+"],
+    ["±", "0", ".", "="],
+  ];
+
+  const buttonStyle = (key: string): CSSProperties => {
+    const operator = ["÷", "×", "-", "+", "="].includes(key);
+    const utility = ["AC", "⌫", "%", "±"].includes(key);
+    return {
+      minHeight: "76px",
+      width: "100%",
+      borderRadius: "999px",
+      border: operator ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(255,255,255,0.06)",
+      background: operator ? (key === "=" ? "#ff9f0a" : "#ff9f0a") : utility ? "#a5a5a5" : "#333333",
+      color: operator ? "#ffffff" : utility ? "#111111" : "#ffffff",
+      fontSize: "24px",
+      fontWeight: 700,
+      fontFamily: "Inter, sans-serif",
+      cursor: "pointer",
+      boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.02)",
+      transition: "transform 100ms ease, filter 120ms ease",
+    };
+  };
+
   return (
     <div className="page">
-      <div className="page-head"><div><p className="eyebrow">TOOLS</p><h1>Calculator</h1><p className="muted">Trading math, normal calculator and live EUR / USD / BDT conversion.</p></div></div>
-      <div className="two-col">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">TOOLS</p>
+          <h1>Calculator</h1>
+          <p className="muted">Trading math, normal calculator and live EUR / USD / BDT conversion.</p>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1.35fr) minmax(320px, 0.65fr)",
+          gap: "18px",
+          alignItems: "start",
+        }}
+      >
         <Card>
-          <span className="label">NORMAL CALCULATOR</span><h2>Quick math</h2>
-          <div className="result mono" style={{ minHeight:"48px", display:"flex", alignItems:"center", justifyContent:"flex-end", overflow:"auto" }}>{display}</div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,minmax(0,1fr))", gap:"7px", marginTop:"10px" }}>
-            {keys.map((key)=><button key={key} className={key === "=" ? "glass-btn" : "chip"} style={{ minHeight:"40px" }} onClick={()=>pushCalc(key)} type="button">{key}</button>)}
+          <div
+            style={{
+              width: "100%",
+              maxWidth: "640px",
+              margin: "0 auto",
+              padding: "8px 2px 2px",
+            }}
+          >
+            <div className="label" style={{ marginBottom: "8px" }}>NORMAL CALCULATOR</div>
+            <h2 style={{ marginTop: 0, fontSize: "24px" }}>iPhone-style Calculator</h2>
+
+            <div
+              className="result mono"
+              style={{
+                minHeight: "118px",
+                display: "flex",
+                alignItems: "flex-end",
+                justifyContent: "flex-end",
+                overflow: "auto",
+                whiteSpace: "nowrap",
+                padding: "18px 8px 14px",
+                marginTop: "10px",
+                background: "transparent",
+                border: "0",
+                fontSize: display.length > 12 ? "40px" : "60px",
+                lineHeight: 1,
+                fontWeight: 500,
+                color: "#f2f2f7",
+                letterSpacing: "-0.03em",
+              }}
+              aria-live="polite"
+            >
+              {formatCalculatorDisplay(display)}
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: "12px",
+                marginTop: "8px",
+                width: "100%",
+              }}
+            >
+              {calcKeys.flat().map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-label={key}
+                  className="calculator-key"
+                  style={buttonStyle(key)}
+                  onClick={() => pushCalc(key)}
+                  onMouseDown={(event: MouseEvent<HTMLButtonElement>) => {
+                    event.currentTarget.style.transform = "scale(0.97)";
+                  }}
+                  onMouseUp={(event: MouseEvent<HTMLButtonElement>) => {
+                    event.currentTarget.style.transform = "scale(1)";
+                  }}
+                  onMouseLeave={(event: MouseEvent<HTMLButtonElement>) => {
+                    event.currentTarget.style.transform = "scale(1)";
+                  }}
+                >
+                  {key}
+                </button>
+              ))}
+            </div>
+
+            <p className="muted" style={{ margin: "14px 4px 0", fontSize: "11px" }}>
+              iPhone-inspired layout: large display, circular keys and dedicated operator column.
+            </p>
           </div>
         </Card>
 
-        <div style={{ display:"grid", gap:"14px" }}>
-          <Card><span className="label">PERCENTAGE</span><h2>Percentage calculator</h2><div className="form-grid"><label>Main data<input type="number" value={main} onChange={(e: ChangeEvent<HTMLInputElement>)=>setMain(Number(e.target.value)||0)} /></label><label>% input<input type="number" value={percent} onChange={(e: ChangeEvent<HTMLInputElement>)=>setPercent(Number(e.target.value)||0)} /></label></div><div className="result mono">{percentageResult.toFixed(2)}</div></Card>
+        <div style={{ display: "grid", gap: "14px" }}>
           <Card>
-            <div className="card-head"><div><span className="label">CURRENCY</span><h2>Live converter</h2></div>{rateLoading ? <span className="muted">Updating…</span> : <span className="muted">Live rate</span>}</div>
-            <div className="form-grid"><label>Amount<input type="number" value={amount} onChange={(e: ChangeEvent<HTMLInputElement>)=>setAmount(Number(e.target.value)||0)} /></label><label>From<select value={from} onChange={(e: ChangeEvent<HTMLSelectElement>)=>setFrom(e.target.value)}><option>EUR</option><option>USD</option><option>BDT</option></select></label><label>To<select value={to} onChange={(e: ChangeEvent<HTMLSelectElement>)=>setTo(e.target.value)}><option>USD</option><option>EUR</option><option>BDT</option></select></label></div>
-            <div className="result mono">{converted === null ? (rateError || "N/A") : `${converted.toLocaleString(undefined,{maximumFractionDigits:4})} ${to}`}</div>
-            <p className="muted" style={{ marginTop:"8px" }}>Rate source: public exchange-rate feed. If the feed is unavailable, the calculator shows N/A instead of a fake rate.</p>
+            <span className="label">PERCENTAGE</span>
+            <h2>Percentage calculator</h2>
+            <div className="form-grid">
+              <label>
+                Main data
+                <input
+                  type="number"
+                  value={main}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setMain(Number(e.target.value) || 0)}
+                />
+              </label>
+              <label>
+                % input
+                <input
+                  type="number"
+                  value={percent}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setPercent(Number(e.target.value) || 0)}
+                />
+              </label>
+            </div>
+            <div className="result mono" style={{ fontSize: "30px", marginTop: "12px" }}>
+              {percentageResult.toFixed(2)}
+            </div>
+          </Card>
+
+          <Card>
+            <div className="card-head">
+              <div>
+                <span className="label">CURRENCY</span>
+                <h2>Live converter</h2>
+              </div>
+              <span className="muted">{rateLoading ? "Updating…" : "Live rate"}</span>
+            </div>
+
+            <div className="form-grid">
+              <label>
+                Amount
+                <input
+                  type="number"
+                  value={amount}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setAmount(Number(e.target.value) || 0)}
+                />
+              </label>
+              <label>
+                From
+                <select value={from} onChange={(e: ChangeEvent<HTMLSelectElement>) => setFrom(e.target.value)}>
+                  <option>EUR</option>
+                  <option>USD</option>
+                  <option>BDT</option>
+                </select>
+              </label>
+              <label>
+                To
+                <select value={to} onChange={(e: ChangeEvent<HTMLSelectElement>) => setTo(e.target.value)}>
+                  <option>USD</option>
+                  <option>EUR</option>
+                  <option>BDT</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="result mono" style={{ fontSize: "28px", marginTop: "12px" }}>
+              {converted === null ? (rateError || "N/A") : `${converted.toLocaleString(undefined, { maximumFractionDigits: 4 })} ${to}`}
+            </div>
+
+            <p className="muted" style={{ marginTop: "8px" }}>
+              Rate source: public exchange-rate feed. If unavailable, the calculator shows N/A instead of a fake rate.
+            </p>
           </Card>
         </div>
       </div>
+
+      <style jsx>{`
+        .calculator-key:hover { filter: brightness(1.08); }
+        @media (max-width: 1100px) {
+          .calculator-key { min-height: 70px !important; }
+        }
+        @media (max-width: 760px) {
+          .calculator-key { min-height: 62px !important; font-size: 21px !important; }
+        }
+      `}</style>
     </div>
   );
 }
