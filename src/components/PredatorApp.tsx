@@ -442,7 +442,14 @@ function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:stri
   );
 }
 
-function Signals({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
+
+function Signals({
+  user,
+  onCoinClick,
+}: {
+  user: User;
+  onCoinClick: (symbol: string) => void;
+}) {
   type ToolResult = {
     score: number;
     label: string;
@@ -468,63 +475,31 @@ function Signals({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
     reasons: string[];
   };
 
+  type HistoryRow = {
+    id: number;
+    symbol: string;
+    direction: "LONG" | "SHORT";
+    score: number;
+    status: string;
+    price: number | null;
+    signal_time: string;
+    expires_at: string | null;
+    volume_spike: number | null;
+    rsi: number | null;
+    tool_scores: Record<string, ToolResult> | null;
+    reason: string | null;
+  };
+
   const [rows, setRows] = useState<SignalRow[]>([]);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [view, setView] = useState<"active" | "history">("active");
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [savingHistory, setSavingHistory] = useState(false);
   const [error, setError] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const [last, setLast] = useState<Date | null>(null);
   const [seconds, setSeconds] = useState(1800);
-
-  async function loadSignals(force = false) {
-    try {
-      if (force) setLoading(true);
-
-      setError("");
-
-      const response = await fetch(
-        `/api/signals?ts=${Date.now()}`,
-        {
-          cache: "no-store",
-        }
-      );
-
-      const payload = await response.json();
-
-      if (!response.ok || !payload.ok) {
-        throw new Error(
-          payload.error || "Signal scan failed"
-        );
-      }
-
-      setRows(payload.rows ?? []);
-      setLast(new Date());
-      setSeconds(1800);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Signal scan failed"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadSignals(true);
-
-    const timer = window.setInterval(() => {
-      setSeconds((value) => {
-        if (value <= 1) {
-          loadSignals(true);
-          return 1800;
-        }
-
-        return value - 1;
-      });
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, []);
 
   const categoryLabel = (score: number) => {
     if (score >= 120) return "Extended / Pumped";
@@ -555,7 +530,204 @@ function Signals({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
     });
   };
 
+  async function loadHistory() {
+    if (!supabase) {
+      setHistoryLoading(false);
+      return;
+    }
+
+    setHistoryLoading(true);
+    setHistoryError("");
+
+    const { data, error: historyLoadError } = await supabase
+      .from("signal_history")
+      .select(
+        "id, symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason"
+      )
+      .eq("user_id", user.id)
+      .order("signal_time", { ascending: false })
+      .limit(200);
+
+    if (historyLoadError) {
+      setHistoryError(historyLoadError.message);
+    } else {
+      setHistory((data ?? []) as HistoryRow[]);
+    }
+
+    setHistoryLoading(false);
+  }
+
+  async function saveNewSignals(signalRows: SignalRow[]) {
+    if (!supabase || signalRows.length === 0) return;
+
+    const qualifying = signalRows.filter(
+      (signal) =>
+        signal.score >= 80 &&
+        (signal.direction === "LONG" ||
+          signal.direction === "SHORT")
+    );
+
+    if (qualifying.length === 0) return;
+
+    setSavingHistory(true);
+
+    try {
+      const now = new Date();
+      const nowIso = now.toISOString();
+
+      const symbols = qualifying.map(
+        (signal) => signal.symbol
+      );
+
+      const { data: activeRows, error: activeError } =
+        await supabase
+          .from("signal_history")
+          .select("symbol")
+          .eq("user_id", user.id)
+          .in("symbol", symbols)
+          .gt("expires_at", nowIso);
+
+      if (activeError) {
+        setHistoryError(activeError.message);
+        return;
+      }
+
+      const activeSymbols = new Set(
+        (activeRows ?? []).map(
+          (item) => item.symbol
+        )
+      );
+
+      const newRows = qualifying
+        .filter(
+          (signal) =>
+            !activeSymbols.has(signal.symbol)
+        )
+        .map((signal) => {
+          const signalTime = new Date(
+            signal.capturedAt
+          );
+
+          const expiresAt = new Date(
+            signalTime.getTime() +
+              30 * 60 * 1000
+          );
+
+          return {
+            user_id: user.id,
+            symbol: signal.symbol,
+            direction: signal.direction,
+            score: signal.score,
+            status:
+              signal.status ||
+              categoryLabel(signal.score),
+            price: signal.price,
+            signal_time: signalTime.toISOString(),
+            expires_at:
+              expiresAt.toISOString(),
+            volume_spike:
+              signal.volumeSpike,
+            rsi: signal.rsi,
+            tool_scores: signal.tools,
+            reason: signal.reasons.join(
+              " · "
+            ),
+          };
+        });
+
+      if (newRows.length === 0) {
+        return;
+      }
+
+      const { error: insertError } =
+        await supabase
+          .from("signal_history")
+          .insert(newRows);
+
+      if (insertError) {
+        setHistoryError(
+          insertError.message
+        );
+        return;
+      }
+
+      await loadHistory();
+    } finally {
+      setSavingHistory(false);
+    }
+  }
+
+  async function loadSignals(force = false) {
+    try {
+      if (force) setLoading(true);
+
+      setError("");
+
+      const response = await fetch(
+        `/api/signals?ts=${Date.now()}`,
+        {
+          cache: "no-store",
+        }
+      );
+
+      const payload = await response.json();
+
+      if (!response.ok || !payload.ok) {
+        throw new Error(
+          payload.error || "Signal scan failed"
+        );
+      }
+
+      const nextRows =
+        (payload.rows ?? []) as SignalRow[];
+
+      setRows(nextRows);
+      setLast(new Date());
+      setSeconds(1800);
+
+      await saveNewSignals(nextRows);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Signal scan failed"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSignals(true);
+    loadHistory();
+
+    const timer = window.setInterval(() => {
+      setSeconds((value) => {
+        if (value <= 1) {
+          loadSignals(true);
+          return 1800;
+        }
+
+        return value - 1;
+      });
+    }, 1000);
+
+    return () =>
+      window.clearInterval(timer);
+  }, []);
+
   const topRows = rows.slice(0, 24);
+
+  const historyGroups = history.reduce<
+    Record<string, HistoryRow[]>
+  >((groups, row) => {
+    if (!groups[row.symbol]) {
+      groups[row.symbol] = [];
+    }
+
+    groups[row.symbol].push(row);
+    return groups;
+  }, {});
 
   return (
     <div className="page">
@@ -575,375 +747,794 @@ function Signals({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
         <div className="actions">
           <span className="countdown">
             NEXT SCAN{" "}
-            {String(Math.floor(seconds / 60)).padStart(
-              2,
-              "0"
-            )}
+            {String(Math.floor(seconds / 60)).padStart(2, "0")}
             :
             {String(seconds % 60).padStart(2, "0")}
           </span>
 
           <button
             className="glass-btn"
-            onClick={() => loadSignals(true)}
+            onClick={() =>
+              loadSignals(true)
+            }
             disabled={loading}
           >
             <RefreshCw
               size={15}
-              style={loading ? { animation: "predator-spin 1s linear infinite" } : undefined}
+              style={
+                loading
+                  ? {
+                      animation:
+                        "predator-spin 1s linear infinite",
+                    }
+                  : undefined
+              }
             />
             Force refresh
           </button>
         </div>
       </div>
 
-      <Card>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "12px",
-            marginBottom: "14px",
-          }}
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          alignItems: "center",
+        }}
+      >
+        <button
+          className={
+            view === "active"
+              ? "chip active"
+              : "chip"
+          }
+          onClick={() => setView("active")}
+          type="button"
         >
-          <div>
-            <span className="label">
-              LIVE SCAN
-            </span>
-            <h2 style={{ marginTop: "4px" }}>
-              {loading
-                ? "Scanning markets..."
-                : `${topRows.length} active signals`}
-            </h2>
-          </div>
+          Active
+        </button>
 
-          {last && (
-            <span className="muted">
-              Updated{" "}
-              {last.toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
-            </span>
-          )}
-        </div>
+        <button
+          className={
+            view === "history"
+              ? "chip active"
+              : "chip"
+          }
+          onClick={() => setView("history")}
+          type="button"
+        >
+          History
+          {history.length > 0
+            ? ` · ${history.length}`
+            : ""}
+        </button>
 
-        {error && (
-          <div
-            style={{
-              padding: "11px",
-              borderRadius: "10px",
-              border:
-                "1px solid rgba(239,35,60,.20)",
-              background:
-                "rgba(239,35,60,.07)",
-              color: "#ff7180",
-              fontSize: "12px",
-              marginBottom: "14px",
-            }}
-          >
-            {error}
-          </div>
+        {savingHistory && (
+          <span className="muted">
+            Saving scan…
+          </span>
         )}
+      </div>
 
-        {!loading &&
-          !error &&
-          topRows.length === 0 && (
+      {view === "active" ? (
+        <>
+          <Card>
             <div
               style={{
-                padding: "30px",
-                textAlign: "center",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+                marginBottom: "14px",
               }}
             >
-              <p className="muted">
-                No qualifying signals right now.
-              </p>
+              <div>
+                <span className="label">
+                  LIVE SCAN
+                </span>
 
-              <p
-                className="muted"
-                style={{ marginTop: "6px" }}
-              >
-                The scanner only shows coins scoring
-                80+.
-              </p>
-            </div>
-          )}
-      </Card>
-
-      {!loading && topRows.length > 0 && (
-        <div className="signal-grid">
-          {topRows.map((signal) => (
-            <Card
-              key={signal.symbol}
-              className="signal-card"
-              onClick={() => onCoinClick(signal.symbol)}
-              style={{ cursor: "pointer" }}
-            >
-              <div className="signal-top">
-                <div
-                  className={
-                    "badge " +
-                    (signal.direction === "LONG"
-                      ? "long"
-                      : signal.direction === "SHORT"
-                        ? "short"
-                        : "")
-                  }
+                <h2
+                  style={{
+                    marginTop: "4px",
+                  }}
                 >
-                  {signal.direction}
-                </div>
+                  {loading
+                    ? "Scanning markets..."
+                    : `${topRows.length} active signals`}
+                </h2>
+              </div>
 
-                <div style={{ textAlign: "right" }}>
-                  <div className="score mono">
-                    {signal.score}
-                    <small>/150</small>
-                  </div>
+              {last && (
+                <span className="muted">
+                  Updated{" "}
+                  {last.toLocaleTimeString(
+                    [],
+                    {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    }
+                  )}
+                </span>
+              )}
+            </div>
 
-                  <div
+            {error && (
+              <div
+                style={{
+                  padding: "11px",
+                  borderRadius: "10px",
+                  border:
+                    "1px solid rgba(239,35,60,.20)",
+                  background:
+                    "rgba(239,35,60,.07)",
+                  color: "#ff7180",
+                  fontSize: "12px",
+                  marginBottom: "14px",
+                }}
+              >
+                {error}
+              </div>
+            )}
+
+            {!loading &&
+              !error &&
+              topRows.length === 0 && (
+                <div
+                  style={{
+                    padding: "30px",
+                    textAlign: "center",
+                  }}
+                >
+                  <p className="muted">
+                    No qualifying signals right now.
+                  </p>
+
+                  <p
                     className="muted"
                     style={{
-                      marginTop: "3px",
-                      fontSize: "9px",
+                      marginTop: "6px",
                     }}
                   >
-                    {categoryLabel(
-                      signal.score
-                    )}
-                  </div>
+                    The scanner only shows coins
+                    scoring 80+.
+                  </p>
                 </div>
-              </div>
+              )}
+          </Card>
 
-              <h2
-                style={{
-                  marginTop: "10px",
-                }}
-              >
-                {signal.baseAsset}
-                <span
-                  className="muted"
-                  style={{
-                    marginLeft: "5px",
-                    fontSize: "11px",
-                  }}
-                >
-                  /USDT
-                </span>
-              </h2>
-
-              <div className="signal-price mono">
-                {formatPrice(signal.price)}
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: "7px",
-                  flexWrap: "wrap",
-                  marginBottom: "10px",
-                }}
-              >
-                <span
-                  className="chip"
-                  style={{
-                    padding: "5px 7px",
-                    fontSize: "9px",
-                  }}
-                >
-                  Score {signal.score}/150
-                </span>
-
-                <span
-                  className="chip"
-                  style={{
-                    padding: "5px 7px",
-                    fontSize: "9px",
-                  }}
-                >
-                  24H{" "}
-                  {signal.priceChange24h >= 0
-                    ? "+"
-                    : ""}
-                  {signal.priceChange24h.toFixed(
-                    2
-                  )}
-                  %
-                </span>
-
-                <span
-                  className="chip"
-                  style={{
-                    padding: "5px 7px",
-                    fontSize: "9px",
-                  }}
-                >
-                  Vol{" "}
-                  {signal.volumeSpike.toFixed(
-                    1
-                  )}
-                  x
-                </span>
-              </div>
-
-              <div className="metrics">
-                <span>
-                  RSI
-                  <b>
-                    {signal.rsi === null
-                      ? "N/A"
-                      : signal.rsi.toFixed(1)}
-                  </b>
-                </span>
-
-                <span>
-                  Funding
-                  <b>
-                    {signal.funding === null
-                      ? "N/A"
-                      : `${(
-                          signal.funding * 100
-                        ).toFixed(3)}%`}
-                  </b>
-                </span>
-
-                <span>
-                  OI
-                  <b>
-                    {signal.openInterestChange ===
-                    null
-                      ? "N/A"
-                      : `${
-                          signal.openInterestChange >=
-                          0
-                            ? "+"
-                            : ""
-                        }${signal.openInterestChange.toFixed(
-                          1
-                        )}%`}
-                  </b>
-                </span>
-              </div>
-
-              <div
-                style={{
-                  marginTop: "12px",
-                  padding: "10px",
-                  borderRadius: "10px",
-                  background:
-                    "rgba(255,255,255,.025)",
-                  border:
-                    "1px solid rgba(255,255,255,.06)",
-                }}
-              >
-                <div
-                  style={{
-                    color: "#999",
-                    fontSize: "9px",
-                    textTransform: "uppercase",
-                    letterSpacing: "1px",
-                    marginBottom: "6px",
-                  }}
-                >
-                  Why it triggered
-                </div>
-
-                <div
-                  style={{
-                    color: "#d2d2d2",
-                    fontSize: "11px",
-                    lineHeight: 1.55,
-                  }}
-                >
-                  {signal.reasons.join(
-                    " · "
-                  )}
-                </div>
-              </div>
-
-              <details
-                style={{
-                  marginTop: "10px",
-                }}
-              >
-                <summary
-                  style={{
-                    cursor: "pointer",
-                    color: "#999",
-                    fontSize: "10px",
-                  }}
-                >
-                  View 15-tool breakdown
-                </summary>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns:
-                      "1fr auto",
-                    gap: "6px 10px",
-                    marginTop: "10px",
-                    fontSize: "10px",
-                  }}
-                >
-                  {Object.entries(
-                    signal.tools
-                  ).map(
-                    ([name, tool]) => (
+          {!loading &&
+            topRows.length > 0 && (
+              <div className="signal-grid">
+                {topRows.map((signal) => (
+                  <Card
+                    key={signal.symbol}
+                    className="signal-card"
+                    onClick={() =>
+                      onCoinClick(signal.symbol)
+                    }
+                    style={{
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div className="signal-top">
                       <div
-                        key={name}
+                        className={
+                          "badge " +
+                          (signal.direction === "LONG"
+                            ? "long"
+                            : signal.direction === "SHORT"
+                              ? "short"
+                              : "")
+                        }
+                      >
+                        {signal.direction}
+                      </div>
+
+                      <div
                         style={{
-                          display: "contents",
+                          textAlign: "right",
                         }}
                       >
-                        <span
-                          style={{
-                            color: "#777",
-                          }}
-                        >
-                          {name}
-                        </span>
+                        <div className="score mono">
+                          {signal.score}
+                          <small>/150</small>
+                        </div>
 
-                        <span
-                          className="mono"
+                        <div
+                          className="muted"
                           style={{
-                            color:
-                              tool.score >= 8
-                                ? "#65e397"
-                                : tool.score <=
-                                    4
-                                  ? "#ff6476"
-                                  : "#bbb",
+                            marginTop: "3px",
+                            fontSize: "9px",
                           }}
                         >
-                          {tool.score}/10
-                        </span>
+                          {categoryLabel(
+                            signal.score
+                          )}
+                        </div>
                       </div>
-                    )
-                  )}
-                </div>
-              </details>
+                    </div>
 
-              <div className="signal-foot">
-                <span className="muted">
-                  Captured{" "}
-                  {new Date(
-                    signal.capturedAt
-                  ).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
+                    <h2
+                      style={{
+                        marginTop: "10px",
+                      }}
+                    >
+                      {signal.baseAsset}
+
+                      <span
+                        className="muted"
+                        style={{
+                          marginLeft: "5px",
+                          fontSize: "11px",
+                        }}
+                      >
+                        /USDT
+                      </span>
+                    </h2>
+
+                    <div className="signal-price mono">
+                      {formatPrice(signal.price)}
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "7px",
+                        flexWrap: "wrap",
+                        marginBottom: "10px",
+                      }}
+                    >
+                      <span
+                        className="chip"
+                        style={{
+                          padding:
+                            "5px 7px",
+                          fontSize: "9px",
+                        }}
+                      >
+                        Score {signal.score}/150
+                      </span>
+
+                      <span
+                        className="chip"
+                        style={{
+                          padding:
+                            "5px 7px",
+                          fontSize: "9px",
+                        }}
+                      >
+                        24H{" "}
+                        {signal.priceChange24h >=
+                        0
+                          ? "+"
+                          : ""}
+                        {signal.priceChange24h.toFixed(
+                          2
+                        )}
+                        %
+                      </span>
+
+                      <span
+                        className="chip"
+                        style={{
+                          padding:
+                            "5px 7px",
+                          fontSize: "9px",
+                        }}
+                      >
+                        Vol{" "}
+                        {signal.volumeSpike.toFixed(
+                          1
+                        )}
+                        x
+                      </span>
+                    </div>
+
+                    <div className="metrics">
+                      <span>
+                        RSI
+                        <b>
+                          {signal.rsi === null
+                            ? "N/A"
+                            : signal.rsi.toFixed(
+                                1
+                              )}
+                        </b>
+                      </span>
+
+                      <span>
+                        Funding
+                        <b>
+                          {signal.funding === null
+                            ? "N/A"
+                            : `${(
+                                signal.funding *
+                                100
+                              ).toFixed(
+                                3
+                              )}%`}
+                        </b>
+                      </span>
+
+                      <span>
+                        OI
+                        <b>
+                          {signal.openInterestChange ===
+                          null
+                            ? "N/A"
+                            : `${
+                                signal.openInterestChange >=
+                                0
+                                  ? "+"
+                                  : ""
+                              }${signal.openInterestChange.toFixed(
+                                1
+                              )}%`}
+                        </b>
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        marginTop: "12px",
+                        padding: "10px",
+                        borderRadius:
+                          "10px",
+                        background:
+                          "rgba(255,255,255,.025)",
+                        border:
+                          "1px solid rgba(255,255,255,.06)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          color: "#999",
+                          fontSize: "9px",
+                          textTransform:
+                            "uppercase",
+                          letterSpacing:
+                            "1px",
+                          marginBottom:
+                            "6px",
+                        }}
+                      >
+                        Why it triggered
+                      </div>
+
+                      <div
+                        style={{
+                          color: "#d2d2d2",
+                          fontSize: "11px",
+                          lineHeight:
+                            1.55,
+                        }}
+                      >
+                        {signal.reasons.join(
+                          " · "
+                        )}
+                      </div>
+                    </div>
+
+                    <details
+                      style={{
+                        marginTop:
+                          "10px",
+                      }}
+                      onClick={(event) =>
+                        event.stopPropagation()
+                      }
+                    >
+                      <summary
+                        style={{
+                          cursor: "pointer",
+                          color:
+                            "#999",
+                          fontSize:
+                            "10px",
+                        }}
+                      >
+                        View 15-tool breakdown
+                      </summary>
+
+                      <div
+                        style={{
+                          display:
+                            "grid",
+                          gridTemplateColumns:
+                            "1fr auto",
+                          gap: "6px 10px",
+                          marginTop:
+                            "10px",
+                          fontSize:
+                            "10px",
+                        }}
+                      >
+                        {Object.entries(
+                          signal.tools
+                        ).map(
+                          ([
+                            name,
+                            tool,
+                          ]) => (
+                            <div
+                              key={
+                                name
+                              }
+                              style={{
+                                display:
+                                  "contents",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  color:
+                                    "#777",
+                                }}
+                              >
+                                {
+                                  name
+                                }
+                              </span>
+
+                              <span
+                                className="mono"
+                                style={{
+                                  color:
+                                    tool.score >=
+                                    8
+                                      ? "#65e397"
+                                      : tool.score <=
+                                          4
+                                        ? "#ff6476"
+                                        : "#bbb",
+                                }}
+                              >
+                                {
+                                  tool.score
+                                }
+                                /10
+                              </span>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </details>
+
+                    <div className="signal-foot">
+                      <span className="muted">
+                        Captured{" "}
+                        {new Date(
+                          signal.capturedAt
+                        ).toLocaleTimeString(
+                          [],
+                          {
+                            hour:
+                              "2-digit",
+                            minute:
+                              "2-digit",
+                          }
+                        )}
+                      </span>
+
+                      <span className="dot-live" />
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            )}
+        </>
+      ) : (
+        <div className="page">
+          <Card>
+            <div className="card-head">
+              <div>
+                <span className="label">
+                  SIGNAL HISTORY
                 </span>
 
-                <span className="dot-live" />
+                <h2>
+                  Expired & previous scans
+                </h2>
               </div>
-            </Card>
-          ))}
+
+              <button
+                className="glass-btn"
+                onClick={loadHistory}
+                disabled={historyLoading}
+                type="button"
+              >
+                <RefreshCw size={14} />
+                Refresh
+              </button>
+            </div>
+
+            {historyError && (
+              <div className="auth-message error">
+                {historyError}
+              </div>
+            )}
+
+            {historyLoading ? (
+              <div
+                style={{
+                  padding: "30px",
+                  textAlign: "center",
+                }}
+              >
+                <span className="muted">
+                  Loading signal history…
+                </span>
+              </div>
+            ) : Object.keys(historyGroups)
+                .length === 0 ? (
+              <div
+                style={{
+                  padding: "30px",
+                  textAlign: "center",
+                }}
+              >
+                <p className="muted">
+                  No signal history yet.
+                </p>
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "grid",
+                  gap: "14px",
+                }}
+              >
+                {Object.entries(
+                  historyGroups
+                ).map(
+                  ([
+                    symbol,
+                    items,
+                  ]) => (
+                    <div
+                      key={symbol}
+                      className="glass-card"
+                      style={{
+                        padding: "14px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display:
+                            "flex",
+                          alignItems:
+                            "center",
+                          justifyContent:
+                            "space-between",
+                          gap: "10px",
+                          marginBottom:
+                            "10px",
+                        }}
+                      >
+                        <div>
+                          <b>
+                            {symbol.replace(
+                              "USDT",
+                              ""
+                            )}
+                          </b>
+
+                          <span className="muted">
+                            {" "}
+                            /USDT ·{" "}
+                            {items.length} scan
+                            {items.length ===
+                            1
+                              ? ""
+                              : "s"}
+                          </span>
+                        </div>
+
+                        <span className="muted">
+                          Newest first
+                        </span>
+                      </div>
+
+                      <div
+                        style={{
+                          display:
+                            "flex",
+                          gap: "10px",
+                          overflowX:
+                            "auto",
+                          paddingBottom:
+                            "4px",
+                          scrollbarWidth:
+                            "thin",
+                        }}
+                      >
+                        {items.map(
+                          (item, index) => {
+                            const expired =
+                              item.expires_at
+                                ? new Date(
+                                    item.expires_at
+                                  ).getTime() <=
+                                  Date.now()
+                                : true;
+
+                            return (
+                              <button
+                                key={
+                                  item.id
+                                }
+                                type="button"
+                                onClick={() =>
+                                  onCoinClick(
+                                    item.symbol
+                                  )
+                                }
+                                style={{
+                                  flex:
+                                    "0 0 230px",
+                                  textAlign:
+                                    "left",
+                                  border:
+                                    "1px solid rgba(255,255,255,.08)",
+                                  borderRadius:
+                                    "12px",
+                                  padding:
+                                    "12px",
+                                  background:
+                                    "rgba(255,255,255,.025)",
+                                  color:
+                                    "inherit",
+                                  cursor:
+                                    "pointer",
+                                  position:
+                                    "relative",
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display:
+                                      "flex",
+                                    justifyContent:
+                                      "space-between",
+                                    gap: "8px",
+                                    alignItems:
+                                      "center",
+                                  }}
+                                >
+                                  <span
+                                    className={
+                                      "badge " +
+                                      (item.direction ===
+                                      "LONG"
+                                        ? "long"
+                                        : "short")
+                                    }
+                                  >
+                                    {
+                                      item.direction
+                                    }
+                                  </span>
+
+                                  <span className="muted">
+                                    {expired
+                                      ? "EXPIRED"
+                                      : "ACTIVE"}
+                                  </span>
+                                </div>
+
+                                <div
+                                  className="mono"
+                                  style={{
+                                    marginTop:
+                                      "12px",
+                                    fontSize:
+                                      "20px",
+                                  }}
+                                >
+                                  {
+                                    item.score
+                                  }
+                                  <span className="muted">
+                                    /150
+                                  </span>
+                                </div>
+
+                                <div
+                                  style={{
+                                    marginTop:
+                                      "5px",
+                                    color:
+                                      "#aaa",
+                                    fontSize:
+                                      "10px",
+                                  }}
+                                >
+                                  {
+                                    item.status
+                                  }
+                                </div>
+
+                                <div
+                                  style={{
+                                    marginTop:
+                                      "12px",
+                                    display:
+                                      "grid",
+                                    gap:
+                                      "5px",
+                                    fontSize:
+                                      "10px",
+                                  }}
+                                >
+                                  <span className="muted">
+                                    Price{" "}
+                                    <b
+                                      style={{
+                                        color:
+                                          "#ddd",
+                                      }}
+                                    >
+                                      {item.price ===
+                                      null
+                                        ? "—"
+                                        : formatPrice(
+                                            Number(
+                                              item.price
+                                            )
+                                          )}
+                                    </b>
+                                  </span>
+
+                                  <span className="muted">
+                                    Captured{" "}
+                                    {new Date(
+                                      item.signal_time
+                                    ).toLocaleString(
+                                      [],
+                                      {
+                                        dateStyle:
+                                          "short",
+                                        timeStyle:
+                                          "short",
+                                      }
+                                    )}
+                                  </span>
+
+                                  {item.reason && (
+                                    <span
+                                      style={{
+                                        marginTop:
+                                          "4px",
+                                        color:
+                                          "#999",
+                                        lineHeight:
+                                          1.45,
+                                      }}
+                                    >
+                                      {
+                                        item.reason
+                                      }
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          }
+                        )}
+                      </div>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+          </Card>
         </div>
       )}
     </div>
   );
 }
+
 
 function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
   const [interval, setIntervalValue] = useState<"1h" | "4h" | "1d">("1h");
@@ -1452,7 +2043,7 @@ export default function PredatorApp({ user }: { user: User }){
       await supabase.auth.signOut();
     }
   };
-  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>;case"Signal":return <Signals onCoinClick={setSelectedSymbol}/>;case"Volume Spike":return <VolumeSpike onCoinClick={setSelectedSymbol}/>;case"BTC Report":return <BTCReport/>;case"Portfolio":return <Portfolio/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>}},[tab]);
+  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>;case"Signal":return <Signals user={user} onCoinClick={setSelectedSymbol}/>;case"Volume Spike":return <VolumeSpike onCoinClick={setSelectedSymbol}/>;case"BTC Report":return <BTCReport/>;case"Portfolio":return <Portfolio/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>}},[tab]);
   return <div className={"app "+(collapsed?"collapsed":"")}>
     <aside className="sidebar"><div onClick={()=>setTab("Dashboard")} className="logo-link"><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>setTab(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
     <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><button className="icon-btn" aria-label="Notifications"><Bell size={17}/></button><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className="content">{content}</div></main>{selectedSymbol ? <CoinDetails symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} /> : null}
