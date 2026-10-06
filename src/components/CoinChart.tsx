@@ -1,12 +1,29 @@
-"use client";
+ "use client";
 
 import { useEffect, useRef, useState } from "react";
 import {
   CandlestickSeries,
-  createChart,
   HistogramSeries,
+  createChart,
+  type IChartApi,
+  type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
+
+type KlineRow = [
+  number,
+  string,
+  string,
+  string,
+  string,
+  string,
+  number,
+  string,
+  number,
+  string,
+  string,
+  string
+];
 
 type Candle = {
   time: UTCTimestamp;
@@ -19,10 +36,10 @@ type Candle = {
 type VolumeBar = {
   time: UTCTimestamp;
   value: number;
-  color?: string;
+  color: string;
 };
 
-const timeframes = [
+const TIMEFRAMES = [
   ["1m", "1m"],
   ["5m", "5m"],
   ["15m", "15m"],
@@ -55,31 +72,52 @@ function formatPrice(value: number) {
   });
 }
 
-export default function CoinChart({ symbol }: { symbol: string }) {
+export default function CoinChart({
+  symbol,
+}: {
+  symbol: string;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
-  const candleSeriesRef = useRef<any>(null);
-  const volumeSeriesRef = useRef<any>(null);
+  const chartRef = useRef<IChartApi | null>(null);
 
-  const [interval, setInterval] = useState("15m");
-  const [price, setPrice] = useState<number | null>(null);
-  const [change, setChange] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const candleSeriesRef =
+    useRef<ISeriesApi<"Candlestick"> | null>(null);
+
+  const volumeSeriesRef =
+    useRef<ISeriesApi<"Histogram"> | null>(null);
+
+  const [chartInterval, setChartInterval] =
+    useState("15m");
+
+  const [price, setPrice] =
+    useState<number | null>(null);
+
+  const [change, setChange] =
+    useState<number | null>(null);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [error, setError] =
+    useState("");
 
   useEffect(() => {
-    if (!containerRef.current) return;
-
     const container = containerRef.current;
+
+    if (!container) return;
 
     const chart = createChart(container, {
       width: container.clientWidth,
       height: 520,
+
       layout: {
-        background: { color: "transparent" },
+        background: {
+          color: "transparent",
+        },
         textColor: "#8d8d8d",
         attributionLogo: true,
       },
+
       grid: {
         vertLines: {
           color: "rgba(255,255,255,0.045)",
@@ -88,43 +126,60 @@ export default function CoinChart({ symbol }: { symbol: string }) {
           color: "rgba(255,255,255,0.045)",
         },
       },
+
       rightPriceScale: {
-        borderColor: "rgba(255,255,255,0.10)",
+        borderColor:
+          "rgba(255,255,255,0.10)",
       },
+
       timeScale: {
-        borderColor: "rgba(255,255,255,0.10)",
+        borderColor:
+          "rgba(255,255,255,0.10)",
         timeVisible: true,
         secondsVisible: false,
       },
+
       crosshair: {
         vertLine: {
-          color: "rgba(239,35,60,0.25)",
-          labelBackgroundColor: "#ef233c",
+          color:
+            "rgba(239,35,60,0.25)",
+          labelBackgroundColor:
+            "#ef233c",
         },
+
         horzLine: {
-          color: "rgba(239,35,60,0.25)",
-          labelBackgroundColor: "#ef233c",
+          color:
+            "rgba(239,35,60,0.25)",
+          labelBackgroundColor:
+            "#ef233c",
         },
       },
     });
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#43d17d",
-      downColor: "#ef233c",
-      borderVisible: false,
-      wickUpColor: "#43d17d",
-      wickDownColor: "#ef233c",
-    });
+    const candleSeries = chart.addSeries(
+      CandlestickSeries,
+      {
+        upColor: "#43d17d",
+        downColor: "#ef233c",
+        borderUpColor: "#43d17d",
+        borderDownColor: "#ef233c",
+        wickUpColor: "#43d17d",
+        wickDownColor: "#ef233c",
+      }
+    );
 
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceScaleId: "volume",
-      color: "rgba(239,35,60,0.30)",
-      base: 0,
-    });
+    const volumeSeries = chart.addSeries(
+      HistogramSeries,
+      {
+        priceFormat: {
+          type: "volume",
+        },
 
-    candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volumeSeries;
+        priceScaleId: "volume",
+
+        base: 0,
+      }
+    );
 
     chart.priceScale("volume").applyOptions({
       scaleMargins: {
@@ -133,18 +188,34 @@ export default function CoinChart({ symbol }: { symbol: string }) {
       },
     });
 
-    const resizeObserver = new ResizeObserver(() => {
-      chart.applyOptions({
-        width: container.clientWidth,
+    candleSeriesRef.current =
+      candleSeries;
+
+    volumeSeriesRef.current =
+      volumeSeries;
+
+    chartRef.current = chart;
+
+    const resizeObserver =
+      new ResizeObserver(() => {
+        if (!containerRef.current) {
+          return;
+        }
+
+        chart.applyOptions({
+          width:
+            containerRef.current
+              .clientWidth,
+        });
       });
-    });
 
     resizeObserver.observe(container);
-    chartRef.current = chart;
 
     return () => {
       resizeObserver.disconnect();
+
       chart.remove();
+
       chartRef.current = null;
       candleSeriesRef.current = null;
       volumeSeriesRef.current = null;
@@ -153,69 +224,108 @@ export default function CoinChart({ symbol }: { symbol: string }) {
 
   useEffect(() => {
     let active = true;
-    let timer: ReturnType<typeof setInterval> | null = null;
 
-    async function load() {
-      if (!chartRef.current) return;
+    async function loadChart() {
+      if (
+        !chartRef.current ||
+        !candleSeriesRef.current ||
+        !volumeSeriesRef.current
+      ) {
+        return;
+      }
 
       setLoading(true);
       setError("");
 
       try {
         const response = await fetch(
-          `/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=500`,
-          { cache: "no-store" }
+          `/api/klines?symbol=${encodeURIComponent(
+            symbol
+          )}&interval=${encodeURIComponent(
+            chartInterval
+          )}&limit=500`,
+          {
+            cache: "no-store",
+          }
         );
 
         const payload = await response.json();
 
         if (!response.ok || !payload.ok) {
           throw new Error(
-            payload.error || "Chart data unavailable"
+            payload.error ||
+              "Chart data unavailable"
           );
         }
 
         if (!active) return;
 
-        const candles: Candle[] = payload.rows.map(
-          (row: number[]) => ({
-            time: Math.floor(row[0] / 1000) as UTCTimestamp,
+        const rows =
+          payload.rows as KlineRow[];
+
+        const candles: Candle[] =
+          rows.map((row) => ({
+            time: Math.floor(
+              row[0] / 1000
+            ) as UTCTimestamp,
+
             open: Number(row[1]),
             high: Number(row[2]),
             low: Number(row[3]),
             close: Number(row[4]),
-          })
-        );
+          }));
 
-        const volumes: VolumeBar[] = payload.rows.map(
-          (row: number[]) => ({
-            time: Math.floor(row[0] / 1000) as UTCTimestamp,
+        const volumes: VolumeBar[] =
+          rows.map((row) => ({
+            time: Math.floor(
+              row[0] / 1000
+            ) as UTCTimestamp,
+
             value: Number(row[5]),
+
             color:
-              Number(row[4]) >= Number(row[1])
+              Number(row[4]) >=
+              Number(row[1])
                 ? "rgba(67,209,125,0.28)"
                 : "rgba(239,35,60,0.28)",
-          })
+          }));
+
+        const previous =
+          candles.length > 1
+            ? candles[candles.length - 2]
+            : null;
+
+        const last =
+          candles.length > 0
+            ? candles[candles.length - 1]
+            : null;
+
+        setPrice(
+          last ? last.close : null
         );
 
-        const last = candles.at(-1);
-        const first = candles.at(-2);
-
-        setPrice(last?.close ?? null);
         setChange(
-          last && first && first.close !== 0
-            ? ((last.close - first.close) / first.close) * 100
+          last &&
+          previous &&
+          previous.close !== 0
+            ? ((last.close -
+                previous.close) /
+                previous.close) *
+                100
             : null
         );
 
-        const chart = chartRef.current;
-        const series = candleSeriesRef.current;
-        const volume = volumeSeriesRef.current;
-        if (!chart || !series || !volume) return;
+        candleSeriesRef.current.setData(
+          candles
+        );
 
-        series.setData(candles);
-        volume.setData(volumes);
-        chart.timeScale().fitContent();
+        volumeSeriesRef.current.setData(
+          volumes
+        );
+
+        chartRef.current
+          .timeScale()
+          .fitContent();
       } catch (requestError) {
         if (!active) return;
 
@@ -225,19 +335,24 @@ export default function CoinChart({ symbol }: { symbol: string }) {
             : "Chart data unavailable"
         );
       } finally {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+        }
       }
     }
 
-    load();
+    loadChart();
 
-    timer = setInterval(load, 15000);
+    const timer = window.setInterval(
+      loadChart,
+      15000
+    );
 
     return () => {
       active = false;
-      if (timer) clearInterval(timer);
+      window.clearInterval(timer);
     };
-  }, [symbol, interval]);
+  }, [symbol, chartInterval]);
 
   return (
     <div>
@@ -252,23 +367,47 @@ export default function CoinChart({ symbol }: { symbol: string }) {
         }}
       >
         <div>
-          <span className="label">PRICE CHART</span>
+          <span className="label">
+            PRICE CHART
+          </span>
+
           <h2 style={{ marginTop: "3px" }}>
-            {symbol.replace("USDT", "/USDT")}
+            {symbol.replace(
+              "USDT",
+              "/USDT"
+            )}
           </h2>
         </div>
 
-        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-          {timeframes.map(([value, label]) => (
-            <button
-              key={value}
-              className={interval === value ? "chip active" : "chip"}
-              onClick={() => setInterval(value)}
-              style={{ padding: "6px 9px" }}
-            >
-              {label}
-            </button>
-          ))}
+        <div
+          style={{
+            display: "flex",
+            gap: "6px",
+            flexWrap: "wrap",
+          }}
+        >
+          {TIMEFRAMES.map(
+            ([value, label]) => (
+              <button
+                key={value}
+                className={
+                  chartInterval === value
+                    ? "chip active"
+                    : "chip"
+                }
+                onClick={() =>
+                  setChartInterval(value)
+                }
+                style={{
+                  padding:
+                    "6px 9px",
+                }}
+                type="button"
+              >
+                {label}
+              </button>
+            )
+          )}
         </div>
       </div>
 
@@ -281,27 +420,43 @@ export default function CoinChart({ symbol }: { symbol: string }) {
           flexWrap: "wrap",
         }}
       >
-        <strong className="mono" style={{ fontSize: "24px" }}>
-          {price === null ? "—" : formatPrice(price)}
+        <strong
+          className="mono"
+          style={{
+            fontSize: "24px",
+          }}
+        >
+          {price === null
+            ? "—"
+            : formatPrice(price)}
         </strong>
 
         <span
           className={
-            change !== null && change >= 0 ? "up" : "muted"
+            change !== null &&
+            change >= 0
+              ? "up"
+              : "muted"
           }
         >
           {change === null
             ? "—"
-            : `${change >= 0 ? "+" : ""}${change.toFixed(2)}%`}
+            : `${change >= 0 ? "+" : ""}${change.toFixed(
+                2
+              )}%`}
         </span>
 
         {loading && (
-          <span className="muted">Loading…</span>
+          <span className="muted">
+            Loading…
+          </span>
         )}
       </div>
 
       {error ? (
-        <div className="auth-message error">{error}</div>
+        <div className="auth-message error">
+          {error}
+        </div>
       ) : (
         <div
           ref={containerRef}
@@ -310,8 +465,10 @@ export default function CoinChart({ symbol }: { symbol: string }) {
             minHeight: "520px",
             borderRadius: "14px",
             overflow: "hidden",
-            background: "rgba(0,0,0,.20)",
-            border: "1px solid rgba(255,255,255,.06)",
+            background:
+              "rgba(0,0,0,.20)",
+            border:
+              "1px solid rgba(255,255,255,.06)",
           }}
         />
       )}
@@ -326,12 +483,18 @@ export default function CoinChart({ symbol }: { symbol: string }) {
           color: "#666",
         }}
       >
-        <span>Live market chart</span>
+        <span>
+          Live market chart
+        </span>
+
         <a
           href="https://www.tradingview.com/"
           target="_blank"
           rel="noreferrer"
-          style={{ color: "#777", textDecoration: "none" }}
+          style={{
+            color: "#777",
+            textDecoration: "none",
+          }}
         >
           TradingView Lightweight Charts™
         </a>
