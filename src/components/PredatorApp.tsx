@@ -1,7 +1,7 @@
  "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, ReactNode, CSSProperties } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
   BarChart3, Bell, Calculator as CalculatorIcon, ChevronRight, Clock3,
@@ -9,6 +9,7 @@ import {
   Sun, Wallet, Zap
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import CoinChart from "@/components/CoinChart";
 
 type Tab = "Dashboard"|"Signal"|"Volume Spike"|"BTC Report"|"Portfolio"|"Calculator"|"Settings";
 
@@ -74,8 +75,8 @@ function SessionBar() {
   </div>
 }
 
-function Card({children,className=""}:{children:React.ReactNode,className?:string}) {
-  return <div className={"glass-card "+className}>{children}</div>
+function Card({children,className="",onClick,style}:{children:ReactNode;className?:string;onClick?:()=>void;style?:CSSProperties}) {
+  return <div className={"glass-card "+className} onClick={onClick} style={style}>{children}</div>;
 }
 
 type MarketItem = {
@@ -148,7 +149,7 @@ function marketTone(change: number) {
   return "neutral";
 }
 
-function Dashboard({go}:{go:(t:Tab)=>void}) {
+function Dashboard({go, onCoinClick}:{go:(t:Tab)=>void; onCoinClick:(symbol:string)=>void}) {
   const [market, setMarket] = useState<MarketResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -246,7 +247,10 @@ function Dashboard({go}:{go:(t:Tab)=>void}) {
       </div>
 
       <div className="stats-grid">
-        <Card>
+        <Card
+          onClick={() => onCoinClick("BTCUSDT")}
+          style={{ cursor: "pointer" }}
+        >
           <span className="label">BTC</span>
 
           <strong className="price">
@@ -355,7 +359,12 @@ function Dashboard({go}:{go:(t:Tab)=>void}) {
                     : "muted";
 
               return (
-                <div className="row" key={item.symbol}>
+                <div
+                  className="row"
+                  key={item.symbol}
+                  onClick={() => onCoinClick(item.symbol)}
+                  style={{ cursor: "pointer" }}
+                >
                   <div>
                     <b>{symbol}</b>
                     <span className="muted">
@@ -399,7 +408,12 @@ function Dashboard({go}:{go:(t:Tab)=>void}) {
             </div>
           ) : (
             liveSignals.slice(0, 4).map((signal) => (
-              <div className="signal-row" key={signal.symbol}>
+              <div
+                className="signal-row"
+                key={signal.symbol}
+                onClick={() => onCoinClick(signal.symbol)}
+                style={{ cursor: "pointer" }}
+              >
                 <div
                   className={
                     "badge " +
@@ -428,7 +442,7 @@ function Dashboard({go}:{go:(t:Tab)=>void}) {
   );
 }
 
-function Signals() {
+function Signals({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
   type ToolResult = {
     score: number;
     label: string;
@@ -664,6 +678,8 @@ function Signals() {
             <Card
               key={signal.symbol}
               className="signal-card"
+              onClick={() => onCoinClick(signal.symbol)}
+              style={{ cursor: "pointer" }}
             >
               <div className="signal-top">
                 <div
@@ -929,7 +945,7 @@ function Signals() {
   );
 }
 
-function VolumeSpike() {
+function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
   const [interval, setIntervalValue] = useState<"1h" | "4h" | "1d">("1h");
   const [rows, setRows] = useState<Array<{
     symbol: string;
@@ -1080,7 +1096,11 @@ function VolumeSpike() {
 
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.symbol}>
+                  <tr
+                    key={row.symbol}
+                    onClick={() => onCoinClick(row.symbol)}
+                    style={{ cursor: "pointer" }}
+                  >
                     <td>
                       <b>{row.symbol.replace("USDT", "/USDT")}</b>
                     </td>
@@ -1128,6 +1148,62 @@ function BTCReport(){return <div className="page"><div className="page-head"><di
 function Portfolio(){const [qty,setQty]=useState(1); const [entry,setEntry]=useState(100); return <div className="page"><div className="page-head"><div><p className="eyebrow">INVESTMENTS</p><h1>Portfolio</h1><p className="muted">Track holdings, plan and live P&amp;L.</p></div><button className="glass-btn">+ Add trade</button></div><div className="stats-grid"><Card><span className="label">INVESTED</span><strong>${(qty*entry).toFixed(2)}</strong></Card><Card><span className="label">CURRENT VALUE</span><strong>$128.40</strong><span className="up">+28.40%</span></Card><Card><span className="label">TOTAL P&amp;L</span><strong className="up">+$28.40</strong></Card><Card><span className="label">COINS</span><strong>1</strong></Card></div><Card><div className="card-head"><div><span className="label">HOLDINGS</span><h2>Position tracker</h2></div></div><div className="form-grid"><label>Coin<input defaultValue="BTC"/></label><label>Quantity<input type="number" value={qty} onChange={e=>setQty(Number(e.target.value)||0)}/></label><label>Entry price<input type="number" value={entry} onChange={e=>setEntry(Number(e.target.value)||0)}/></label><label>Plan<input placeholder="Long-term / scalp"/></label></div></Card></div>}
 
 function CalculatorPage(){const [a,setA]=useState(100);const [p,setP]=useState(10);const [from,setFrom]=useState("EUR");const [to,setTo]=useState("USD");return <div className="page"><div className="page-head"><div><p className="eyebrow">TOOLS</p><h1>Calculator</h1><p className="muted">Quick trading and currency utilities.</p></div></div><div className="two-col"><Card><span className="label">PERCENTAGE</span><h2>Percentage calculator</h2><div className="form-grid"><label>Main data<input type="number" value={a} onChange={e=>setA(Number(e.target.value))}/></label><label>% input<input type="number" value={p} onChange={e=>setP(Number(e.target.value))}/></label></div><div className="result mono">{(a*p/100).toFixed(2)}</div></Card><Card><span className="label">CURRENCY</span><h2>Converter</h2><div className="form-grid"><label>Amount<input defaultValue="100"/></label><label>From<select value={from} onChange={e=>setFrom(e.target.value)}><option>EUR</option><option>USD</option><option>BDT</option></select></label><label>To<select value={to} onChange={e=>setTo(e.target.value)}><option>USD</option><option>EUR</option><option>BDT</option></select></label></div><p className="muted">Live rates will be connected in the data integration phase.</p></Card></div></div>}
+
+
+function CoinDetails({ symbol, onClose }: { symbol: string; onClose: () => void }) {
+  const title = symbol.replace("USDT", "/USDT");
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        padding: "18px",
+        background: "rgba(0,0,0,.82)",
+        backdropFilter: "blur(14px)",
+        overflow: "auto",
+      }}
+    >
+      <div
+        className="glass-card"
+        style={{
+          minHeight: "calc(100vh - 36px)",
+          maxWidth: "1500px",
+          margin: "0 auto",
+          background: "rgba(7,7,7,.94)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            marginBottom: "14px",
+          }}
+        >
+          <div>
+            <p className="eyebrow">COIN INTELLIGENCE</p>
+            <h1>{title}</h1>
+            <p className="muted">Interactive price chart</p>
+          </div>
+
+          <button
+            className="glass-btn"
+            onClick={onClose}
+            aria-label={`Close ${title} chart`}
+          >
+            <ChevronRight size={16} style={{ transform: "rotate(180deg)" }} />
+            Back
+          </button>
+        </div>
+
+        <CoinChart symbol={symbol} />
+      </div>
+    </div>
+  );
+}
 
 function SettingsPage({
   user,
@@ -1366,6 +1442,7 @@ function ThemeToggle(){const [dark,setDark]=useState(true);useEffect(()=>{docume
 export default function PredatorApp({ user }: { user: User }){
   const [tab,setTab]=useState<Tab>("Dashboard");
   const [collapsed,setCollapsed]=useState(false);
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [profileName, setProfileName] = useState(() => getDisplayName(user));
   const displayName = profileName;
   const avatar = getAvatar(user);
@@ -1375,9 +1452,9 @@ export default function PredatorApp({ user }: { user: User }){
       await supabase.auth.signOut();
     }
   };
-  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={setTab}/>;case"Signal":return <Signals/>;case"Volume Spike":return <VolumeSpike/>;case"BTC Report":return <BTCReport/>;case"Portfolio":return <Portfolio/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={setTab}/>}},[tab]);
+  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>;case"Signal":return <Signals onCoinClick={setSelectedSymbol}/>;case"Volume Spike":return <VolumeSpike onCoinClick={setSelectedSymbol}/>;case"BTC Report":return <BTCReport/>;case"Portfolio":return <Portfolio/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={setTab} onCoinClick={setSelectedSymbol}/>}},[tab]);
   return <div className={"app "+(collapsed?"collapsed":"")}>
     <aside className="sidebar"><div onClick={()=>setTab("Dashboard")} className="logo-link"><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>setTab(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
-    <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><button className="icon-btn" aria-label="Notifications"><Bell size={17}/></button><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className="content">{content}</div></main>
+    <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><button className="icon-btn" aria-label="Notifications"><Bell size={17}/></button><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className="content">{content}</div></main>{selectedSymbol ? <CoinDetails symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} /> : null}
   </div>
 }
