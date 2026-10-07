@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 60;
 
-const CURRENT_ENGINE_VERSION = "scalp-v5-global-history";
+const CURRENT_ENGINE_VERSION = "scalp-v6-global-canonical";
 const WINDOW_MS = 30 * 60 * 1000;
 
 const SPOT_BASES = [
@@ -144,16 +144,27 @@ type ScanCache = {
   };
 };
 
-let scanCache: ScanCache | null = null;
-
 // One canonical scan snapshot for every visitor/account/browser.
 // The service-role key is server-only and must NEVER be exposed to the client.
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_SERVER_KEY =
+  process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
 const sharedSupabase =
-  process.env.NEXT_PUBLIC_SUPABASE_URL && (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)
-    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)!, {
+  SUPABASE_URL && SUPABASE_SERVER_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVER_KEY, {
         auth: { autoRefreshToken: false, persistSession: false },
       })
     : null;
+
+function requireSharedSupabase() {
+  if (!sharedSupabase) {
+    throw new Error(
+      "Shared signal storage is not configured. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_ROLE_KEY) in Vercel."
+    );
+  }
+  return sharedSupabase;
+}
 
 async function readSharedSnapshot(windowId: number): Promise<ScanCache["data"] | null> {
   if (!sharedSupabase) return null;
@@ -198,7 +209,10 @@ async function migrateLegacyHistory() {
       .order("signal_time", { ascending: false })
       .limit(5000);
 
-    if (error || !data?.length) {
+    if (error) {
+      return;
+    }
+    if (!data?.length) {
       legacyHistoryMigrated = true;
       return;
     }
@@ -276,45 +290,46 @@ async function syncSnapshotHistory(data: ScanCache["data"]) {
 }
 
 async function readGlobalHistory(): Promise<GlobalHistoryRow[]> {
-  if (!sharedSupabase) return [];
-  try {
-    const { data, error } = await sharedSupabase
-      .from("signal_history_global")
-      .select("id, window_id, symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason")
-      .order("signal_time", { ascending: false })
-      .limit(500);
-    if (error) return [];
-    return (data ?? []) as GlobalHistoryRow[];
-  } catch {
-    return [];
-  }
+  const supabase = requireSharedSupabase();
+  const { data, error } = await supabase
+    .from("signal_history_global")
+    .select("id, window_id, symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason")
+    .order("signal_time", { ascending: false })
+    .limit(500);
+  if (error) throw new Error(`Global history read failed: ${error.message}`);
+  return (data ?? []) as GlobalHistoryRow[];
 }
 
 async function publishCanonicalSnapshot(
   windowId: number,
   data: ScanCache["data"],
 ): Promise<ScanCache["data"]> {
-  if (!sharedSupabase) return data;
+  const supabase = requireSharedSupabase();
 
-  try {
-    // First writer wins for this window + engine version.
-    await sharedSupabase
-      .from("signal_scan_snapshots")
-      .upsert(
-        {
-          window_id: windowId,
-          engine_version: CURRENT_ENGINE_VERSION,
-          payload: data,
-          created_at: data.updatedAt,
-        },
-        { onConflict: "window_id,engine_version", ignoreDuplicates: true },
-      );
+  // First writer wins for this window + engine version. Every caller then
+  // re-reads the stored row so all devices/accounts receive the exact same
+  // canonical payload.
+  const { error } = await supabase
+    .from("signal_scan_snapshots")
+    .upsert(
+      {
+        window_id: windowId,
+        engine_version: CURRENT_ENGINE_VERSION,
+        payload: data,
+        created_at: data.updatedAt,
+      },
+      { onConflict: "window_id,engine_version", ignoreDuplicates: true },
+    );
 
-    const canonical = await readSharedSnapshot(windowId);
-    return canonical ?? data;
-  } catch {
-    return data;
+  if (error) {
+    throw new Error(`Signal snapshot write failed: ${error.message}`);
   }
+
+  const canonical = await readSharedSnapshot(windowId);
+  if (!canonical) {
+    throw new Error("Signal snapshot was written but could not be read back.");
+  }
+  return canonical;
 }
 
 async function fetchJson<T>(bases: string[], path: string, timeoutMs = 6500): Promise<T> {
@@ -885,31 +900,28 @@ function rsiSlope(values: number[]): number {
 
 export async function GET(request: Request) {
   try {
+    requireSharedSupabase();
+
     const url = new URL(request.url);
+    const headers = {
+      "Cache-Control": "no-store, max-age=0, must-revalidate",
+    };
 
     if (url.searchParams.get("history") === "1") {
       await migrateLegacyHistory();
-      return NextResponse.json({ ok: true, history: await readGlobalHistory() });
+      return NextResponse.json({ ok: true, history: await readGlobalHistory() }, { headers });
     }
 
     const { windowId, scanId } = windowMeta();
 
-    // Database snapshot is the source of truth so every user gets the exact
-    // same coins, scores, direction, levels and timestamps for a scan window.
+    // Database snapshot is the ONLY source of truth. We intentionally do not
+    // fall back to a per-instance cache because that could make two devices
+    // see different scan results when Supabase is unavailable.
     const sharedSnapshot = await readSharedSnapshot(windowId);
     if (sharedSnapshot) {
       await migrateLegacyHistory();
       await syncSnapshotHistory(sharedSnapshot);
-      scanCache = { windowId, data: sharedSnapshot };
-      return NextResponse.json(sharedSnapshot);
-    }
-
-    // Local process cache is only a fast fallback before the shared snapshot
-    // is written. It is never preferred over the shared source of truth.
-    if (scanCache && scanCache.windowId === windowId) {
-      await migrateLegacyHistory();
-      await syncSnapshotHistory(scanCache.data);
-      return NextResponse.json(scanCache.data);
+      return NextResponse.json(sharedSnapshot, { headers });
     }
 
     const [exchangeInfo, tickers, books, premiums] = await Promise.all([
@@ -1225,15 +1237,17 @@ export async function GET(request: Request) {
     const canonical = await publishCanonicalSnapshot(windowId, response);
     await migrateLegacyHistory();
     await syncSnapshotHistory(canonical);
-    scanCache = { windowId, data: canonical };
-    return NextResponse.json(canonical);
+    return NextResponse.json(canonical, { headers });
   } catch (error) {
     return NextResponse.json(
       {
         ok: false,
         error: error instanceof Error ? error.message : "Signal scan failed",
       },
-      { status: 502 },
+      {
+        status: 502,
+        headers: { "Cache-Control": "no-store, max-age=0, must-revalidate" },
+      },
     );
   }
 }
