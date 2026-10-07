@@ -883,7 +883,7 @@ function CompactSignalCard({
           }}
         >
           <div>
-            <div style={{ color: "#78838f", fontSize: 10 }}>FUNDING RATE</div>
+            <div style={{ color: "#78838f", fontSize: 10 }}>FUNDING RATE · BINANCE PERP</div>
             <strong style={{ color: fundingRate !== null && fundingRate < 0 ? "#ff6f80" : "#31efb3", fontSize: 12 }}>
               {fundingText}
             </strong>
@@ -907,7 +907,7 @@ function CompactSignalCard({
                 letterSpacing: ".04em",
               }}
             >
-              {direction}
+              {direction === "LONG" ? "BULLISH" : "BEARISH"}
             </span>
           </div>
         </div>
@@ -1200,7 +1200,7 @@ function Signals({
             <RefreshCw
               size={15}
               style={
-                loading
+                scanning || loading
                   ? {
                       animation:
                         "predator-spin 1s linear infinite",
