@@ -1729,170 +1729,199 @@ function HistorySignalStack({
 }
 
 function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
-  type Interval = "1h" | "4h" | "1d";
-  type Row = {
+  const [interval, setIntervalValue] = useState<"1h" | "4h" | "1d">("1h");
+  const [rows, setRows] = useState<Array<{
     symbol: string;
-    baseAsset: string;
     price: number;
-    quoteVolume24h: number;
+    change24h: number;
     volume: number;
     averageVolume: number;
     spike: number;
     rsi: number | null;
-    change1h: number | null;
-    change4h: number | null;
-    change1d: number | null;
-    level: "Extreme" | "High" | "Moderate" | "Normal";
-  };
-  const [interval, setIntervalValue] = useState<Interval>("1h");
-  const [filter, setFilter] = useState<"All" | "Extreme" | "High" | "Moderate" | "Normal">("All");
-  const [rows, setRows] = useState<Row[]>([]);
+    level: string;
+    reason: string;
+  }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const requestIdRef = useRef(0);
 
   useEffect(() => {
     let active = true;
-    const controller = new AbortController();
-    const requestId = ++requestIdRef.current;
 
     const load = async () => {
       setLoading(true);
       setError("");
+
       try {
-        const url = `/api/volume-spike?interval=${encodeURIComponent(interval)}&ts=${Date.now()}`;
-        const response = await fetch(url, {
+        const response = await fetch(`/api/volume-spike?interval=${interval}`, {
           cache: "no-store",
-          signal: controller.signal,
-          headers: { "Cache-Control": "no-cache, no-store, max-age=0", Pragma: "no-cache" },
         });
+
         const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || "Volume data unavailable");
-        if (!active || requestId !== requestIdRef.current) return;
-        setRows(Array.isArray(data.rows) ? data.rows : []);
-        setLastUpdated(data.updatedAt ? new Date(data.updatedAt) : new Date());
-      } catch (e) {
-        if (!active || requestId !== requestIdRef.current) return;
-        if (e instanceof DOMException && e.name === "AbortError") return;
-        setError(e instanceof Error ? e.message : "Volume data unavailable");
-        setRows([]);
+
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Volume data unavailable");
+        }
+
+        if (!active) return;
+
+        setRows(data.rows || []);
+        setLastUpdated(new Date(data.updatedAt));
+      } catch (requestError) {
+        if (!active) return;
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Volume data unavailable"
+        );
       } finally {
-        if (active && requestId === requestIdRef.current) setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
-    void load();
-    const timer = window.setInterval(() => void load(), 60000);
-    return () => { active = false; controller.abort(); window.clearInterval(timer); };
+    load();
+
+    const timer = window.setInterval(load, 60000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [interval]);
 
-  const formatCompact = (value: number) => {
-    if (!Number.isFinite(value)) return "—";
-    if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
-    if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(0)}M`;
-    if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(0)}K`;
-    return value.toFixed(0);
+  const formatVolume = (value: number) => {
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+    if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+    return `$${value.toFixed(0)}`;
   };
-  const formatPct = (value: number | null) => value == null || !Number.isFinite(value) ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-  const filtered = useMemo(() => {
-    const source = filter === "All" ? rows : rows.filter((row) => row.level === filter);
-    return source.slice(0, 40);
-  }, [filter, rows]);
 
-  const filterButtons: Array<[typeof filter, string]> = [
-    ["All", "All"], ["Extreme", "Extreme"], ["High", "High"], ["Moderate", "Moderate"], ["Normal", "Normal"],
-  ];
+  const formatRsi = (value: number | null) =>
+    value === null ? "—" : value.toFixed(0);
+
+  const rsiStatus = (value: number | null) => {
+    if (value === null) return "Normal";
+    if (value >= 70) return "Overbought";
+    if (value <= 30) return "Oversold";
+    return "Neutral";
+  };
 
   return (
-    <div className="page" style={{ paddingTop: 8 }}>
-      <div style={{
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:18, flexWrap:"wrap",
-        marginBottom: 18,
-      }}>
-        <div style={{ display:"flex", alignItems:"center", gap:16 }}>
-          <div style={{ width:58, height:58, borderRadius:16, display:"grid", placeItems:"center", background:"linear-gradient(145deg, rgba(17,34,49,.95), rgba(5,13,21,.95))", border:"1px solid rgba(87,126,162,.22)", boxShadow:"0 12px 30px rgba(0,0,0,.18)" }}>
-            <BarChart3 size={30} strokeWidth={1.7} />
-          </div>
-          <div>
-            <h1 style={{ margin:0, fontSize:34, letterSpacing:"-.025em" }}>
-              VOLUME <span style={{ color:"#ff3a45" }}>SPIKE</span>
-            </h1>
-            <div style={{ marginTop:4, fontSize:15, color:"#91a6bb" }}>Unusual Trading Activity</div>
-          </div>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">UNUSUAL ACTIVITY</p>
+          <h1>Volume Spike</h1>
+          <p className="muted">
+            Activity monitor — not a trade signal.
+          </p>
         </div>
 
-        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-          {([ ["1h","1H"],["4h","4H"],["1d","1D"] ] as const).map(([value,label]) => (
-            <button key={value} type="button" onClick={() => setIntervalValue(value)} style={{
-              minWidth:92, height:50, borderRadius:12, border: interval === value ? "1px solid #ff3a45" : "1px solid rgba(86,122,155,.25)",
-              background: interval === value ? "linear-gradient(180deg, rgba(255,58,69,.15), rgba(31,16,21,.92))" : "rgba(8,18,28,.78)",
-              color: interval === value ? "#fff" : "#a9bfd4", fontSize:17, fontWeight:700,
-              boxShadow: interval === value ? "0 0 18px rgba(255,58,69,.16)" : "none",
-            }}>{label}</button>
-          ))}
-          <div style={{ width:10 }} />
-          {filterButtons.map(([value,label]) => (
-            <button key={value} type="button" onClick={() => setFilter(value)} style={{
-              minWidth: value === "Moderate" ? 124 : 98, height:50, borderRadius:12,
-              border: filter === value ? "1px solid #ff3a45" : "1px solid rgba(86,122,155,.25)",
-              background: filter === value ? "linear-gradient(180deg, rgba(255,58,69,.14), rgba(31,16,21,.92))" : "rgba(8,18,28,.78)",
-              color: filter === value ? "#fff" : "#a9bfd4", fontSize:16, fontWeight:700,
-            }}>{label}</button>
+        <div className="chips">
+          {([
+            ["1h", "1H"],
+            ["4h", "4H"],
+            ["1d", "1D"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              className={interval === value ? "chip active" : "chip"}
+              onClick={() => setIntervalValue(value)}
+            >
+              {label}
+            </button>
           ))}
         </div>
-        <div style={{ marginTop: 8, color: "#71869a", fontSize: 12, textAlign: "right" }}>Scanning timeframe: <b style={{ color: "#cfe0ee" }}>{interval.toUpperCase()}</b></div>
       </div>
 
-      <div style={{
-        borderRadius:18, overflow:"hidden", background:"linear-gradient(180deg, rgba(5,17,27,.96), rgba(3,10,17,.98))",
-        border:"1px solid rgba(75,110,141,.20)", boxShadow:"0 18px 50px rgba(0,0,0,.20)"
-      }}>
-        <div style={{ display:"grid", gridTemplateColumns:"56px minmax(190px,1.35fr) minmax(160px,1fr) 120px 120px 1fr 1fr 1fr 150px", alignItems:"center", padding:"15px 18px", color:"#a9bfd4", fontSize:16, borderBottom:"1px solid rgba(84,117,145,.16)" }}>
-          {['#','COIN',`VOLUME (${interval.toUpperCase()})`,`SPIKE (${interval.toUpperCase()})`,`RSI (${interval.toUpperCase()})`,'RSI STATUS','1H','4H','1D','STATUS'].map((h,i) => i===9 ? <span key={h} style={{ textAlign:"right" }}>{h}</span> : <span key={h}>{h}</span>)}
+      <Card>
+        <div className="card-head">
+          <div>
+            <span className="label">LIVE SCAN</span>
+            <h2>{loading ? "Scanning..." : `${rows.length} markets`}</h2>
+          </div>
+
+          <span className="muted">
+            {lastUpdated
+              ? `Updated ${lastUpdated.toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}`
+              : "Waiting for data"}
+          </span>
         </div>
 
         {error ? (
-          <div style={{ padding:40, color:"#ff6f7a" }}>{error}</div>
-        ) : loading && filtered.length === 0 ? (
-          <div style={{ padding:42, color:"#90a4b8" }}>Scanning Binance USDT markets…</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ padding:42, color:"#90a4b8" }}>No strong volume expansion found for this timeframe.</div>
+          <div className="auth-message error">{error}</div>
+        ) : loading && rows.length === 0 ? (
+          <div className="muted" style={{ padding: "22px 0" }}>
+            Loading unusual activity…
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="muted" style={{ padding: "22px 0" }}>
+            No unusual activity found for this timeframe.
+          </div>
         ) : (
-          <div>
-            {filtered.map((row,index) => {
-              const rsiStatus = row.rsi == null ? "Neutral" : row.rsi >= 70 ? "Overbought" : row.rsi <= 30 ? "Oversold" : "Neutral";
-              const spikeBg = row.spike >= 3 ? "rgba(255,55,70,.12)" : row.spike >= 2 ? "rgba(255,184,34,.12)" : "rgba(255,210,74,.10)";
-              const spikeBorder = row.spike >= 3 ? "rgba(255,55,70,.30)" : "rgba(255,190,35,.28)";
-              return (
-                <div key={row.symbol} onClick={() => onCoinClick(row.symbol)} style={{
-                  display:"grid", gridTemplateColumns:"56px minmax(190px,1.35fr) minmax(160px,1fr) 120px 120px 1fr 1fr 1fr 150px", alignItems:"center",
-                  minHeight:76, padding:"0 18px", borderBottom:"1px solid rgba(84,117,145,.13)", cursor:"pointer",
-                }}>
-                  <div><span style={{ width:42, height:42, display:"grid", placeItems:"center", border:"1px solid rgba(120,153,184,.35)", borderRadius:9, color:"#b5c9dc", fontSize:15 }}>{index+1}</span></div>
-                  <div style={{ display:"flex", alignItems:"center", gap:13, minWidth:0 }}>
-                    <img src={`https://assets.coincap.io/assets/icons/${row.baseAsset.toLowerCase()}@2x.png`} alt="" width={38} height={38} style={{ borderRadius:"50%", background:"#101a23" }} onError={(e)=>{ (e.currentTarget as HTMLImageElement).style.visibility='hidden'; }} />
-                    <div style={{ minWidth:0 }}><div style={{ fontWeight:800, fontSize:18, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{row.baseAsset} <span style={{ color:"#7f93a6", fontSize:13, fontWeight:600 }}>/USDT</span></div></div>
-                  </div>
-                  <div><div style={{ fontSize:18, fontWeight:800 }}>${formatCompact(row.volume)}</div><div style={{ color:"#8095a9", fontSize:14 }}>Avg ${formatCompact(row.averageVolume)}</div></div>
-                  <div><span style={{ display:"inline-flex", minWidth:74, justifyContent:"center", padding:"8px 12px", borderRadius:10, background:spikeBg, border:`1px solid ${spikeBorder}`, color: row.spike >= 3 ? "#ff5b69" : "#ffd447", fontWeight:800, fontSize:17 }}>{row.spike.toFixed(1)}×</span></div>
-                  <div style={{ fontSize:17, fontWeight:700 }}>{row.rsi == null ? "—" : row.rsi.toFixed(1)}</div>
-                  <div><span style={{ display:"inline-flex", padding:"10px 14px", borderRadius:10, background: rsiStatus === "Overbought" ? "rgba(255,55,70,.11)" : rsiStatus === "Oversold" ? "rgba(0,235,167,.11)" : "rgba(46,91,131,.18)", border:`1px solid ${rsiStatus === "Neutral" ? "rgba(76,118,157,.25)" : "rgba(255,255,255,.06)"}`, color: rsiStatus === "Overbought" ? "#ff5968" : rsiStatus === "Oversold" ? "#00e7a4" : "#9bb6cf", fontWeight:700 }}>{rsiStatus}</span></div>
-                  <div><span style={{ display:"inline-flex", padding:"9px 13px", borderRadius:9, background: (row.change1h ?? 0) >= 0 ? "rgba(0,205,145,.10)" : "rgba(255,60,75,.10)", color:(row.change1h ?? 0) >= 0 ? "#00e5a2" : "#ff6471", fontWeight:800 }}>{formatPct(row.change1h)}</span></div>
-                  <div><span style={{ display:"inline-flex", padding:"9px 13px", borderRadius:9, background:(row.change4h ?? 0) >= 0 ? "rgba(0,205,145,.10)" : "rgba(255,60,75,.10)", color:(row.change4h ?? 0) >= 0 ? "#00e5a2" : "#ff6471", fontWeight:800 }}>{formatPct(row.change4h)}</span></div>
-                  <div><span style={{ display:"inline-flex", padding:"9px 13px", borderRadius:9, background:(row.change1d ?? 0) >= 0 ? "rgba(0,205,145,.10)" : "rgba(255,60,75,.10)", color:(row.change1d ?? 0) >= 0 ? "#00e5a2" : "#ff6471", fontWeight:800 }}>{formatPct(row.change1d)}</span></div>
-                  <div style={{ textAlign:"right" }}><span style={{ display:"inline-flex", minWidth:112, justifyContent:"center", padding:"10px 14px", borderRadius:10, border:"1px solid rgba(150,170,190,.20)", color: row.level === "Extreme" ? "#ff5463" : row.level === "High" ? "#ff9a34" : row.level === "Moderate" ? "#f0d13d" : "#b4cae0", background: row.level === "Extreme" ? "rgba(255,55,70,.11)" : row.level === "High" ? "rgba(255,143,44,.10)" : row.level === "Moderate" ? "rgba(229,196,55,.08)" : "rgba(52,91,125,.18)", fontWeight:800 }}>{row.level}</span></div>
-                </div>
-              );
-            })}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>COIN</th>
+                  <th>SPIKE</th>
+                  <th>VOLUME</th>
+                  <th>RSI</th>
+                  <th>RSI STATUS</th>
+                  <th>LEVEL</th>
+                  <th>WHY</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.symbol}
+                    onClick={() => onCoinClick(row.symbol)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td>
+                      <b>{row.symbol.replace("USDT", "/USDT")}</b>
+                    </td>
+
+                    <td className="mono">
+                      {row.spike.toFixed(1)}×
+                    </td>
+
+                    <td className="mono">
+                      {formatVolume(row.volume)}
+                    </td>
+
+                    <td className="mono">
+                      {formatRsi(row.rsi)}
+                    </td>
+
+                    <td>
+                      <span className="muted">
+                        {rsiStatus(row.rsi)}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className={`level ${row.level.toLowerCase()}`}>
+                        {row.level}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className="muted">{row.reason}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
-
-        <div style={{ padding:"13px 18px", display:"flex", justifyContent:"space-between", color:"#71869a", fontSize:12, borderTop:"1px solid rgba(84,117,145,.13)" }}>
-          <span>{filtered.length} qualifying markets</span>
-          <span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"})}` : "Waiting for data"}</span>
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }
@@ -2197,6 +2226,8 @@ function Portfolio({ user }: { user: User }) {
     createdAt: string;
   };
 
+  type PortfolioTab = "Overview" | "Holdings" | "Performance" | "History" | "Notes";
+
   const [holdings, setHoldings] = useState<Holding[]>(() => {
     const raw = user.user_metadata?.predator_portfolio;
     return Array.isArray(raw) ? raw : [];
@@ -2213,6 +2244,10 @@ function Portfolio({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [activeTab, setActiveTab] = useState<PortfolioTab>("Overview");
+  const [showForm, setShowForm] = useState(false);
+  const [currencyOpen, setCurrencyOpen] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -2256,6 +2291,7 @@ function Portfolio({ user }: { user: User }) {
       }
       setPrices(next);
       setMarketSymbols([...symbols].sort());
+      setLastUpdated(new Date());
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not refresh prices");
     } finally {
@@ -2277,11 +2313,25 @@ function Portfolio({ user }: { user: User }) {
   };
 
   const resetForm = () => {
-    setEditingId(null); setSymbol("BTCUSDT"); setQuantity(0); setEntryPrice(0); setInvested(0); setPlan("Scalp"); setNotes("");
+    setEditingId(null);
+    setSymbol("BTCUSDT");
+    setQuantity(0);
+    setEntryPrice(0);
+    setInvested(0);
+    setPlan("Scalp");
+    setNotes("");
   };
 
   const startEdit = (h: Holding) => {
-    setEditingId(h.id); setSymbol(h.symbol); setQuantity(h.quantity); setEntryPrice(h.entryPrice); setInvested(h.invested); setPlan(h.plan); setNotes(h.notes);
+    setEditingId(h.id);
+    setSymbol(h.symbol);
+    setQuantity(h.quantity);
+    setEntryPrice(h.entryPrice);
+    setInvested(h.invested);
+    setPlan(h.plan);
+    setNotes(h.notes);
+    setShowForm(true);
+    setActiveTab("Holdings");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -2303,24 +2353,36 @@ function Portfolio({ user }: { user: User }) {
       createdAt: editingId ? (holdings.find((h) => h.id === editingId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
     };
     const next = editingId ? holdings.map((h) => h.id === editingId ? item : h) : [item, ...holdings];
-    setSaving(true); setMessage("");
+    setSaving(true);
+    setMessage("");
     try {
       await saveToSupabase(next);
       setHoldings(next);
       setMessage(editingId ? "Position updated." : "Position saved.");
       resetForm();
+      setShowForm(false);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not save position");
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const deleteHolding = async (id: string) => {
     if (!window.confirm("Delete this portfolio position?")) return;
     const next = holdings.filter((h) => h.id !== id);
-    setSaving(true); setMessage("");
-    try { await saveToSupabase(next); setHoldings(next); setMessage("Position deleted."); if (editingId === id) resetForm(); }
-    catch (err) { setMessage(err instanceof Error ? err.message : "Could not delete position"); }
-    finally { setSaving(false); }
+    setSaving(true);
+    setMessage("");
+    try {
+      await saveToSupabase(next);
+      setHoldings(next);
+      setMessage("Position deleted.");
+      if (editingId === id) resetForm();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Could not delete position");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const calcInvestment = () => setInvested(quantity * entryPrice);
@@ -2332,45 +2394,167 @@ function Portfolio({ user }: { user: User }) {
   const pnl = currentTotal - investedTotal;
   const pnlPct = investedTotal > 0 ? pnl / investedTotal * 100 : 0;
 
-  return (
-    <div className="page">
-      <div className="page-head"><div><p className="eyebrow">INVESTMENTS</p><h1>Portfolio</h1><p className="muted">Live USD portfolio with Supabase persistence.</p></div><button className="glass-btn" onClick={refreshPrices} disabled={loading}><RefreshCw size={14} /> {loading ? "Refreshing" : "Refresh prices"}</button></div>
+  const rows = useMemo(() => holdings.map((h) => {
+    const current = prices[h.symbol] || h.entryPrice;
+    const value = h.quantity * current;
+    const hpnl = value - h.invested;
+    const hpnlPct = h.invested > 0 ? hpnl / h.invested * 100 : 0;
+    return { ...h, current, value, hpnl, hpnlPct };
+  }), [holdings, prices]);
 
-      <div className="stats-grid">
-        <Card><span className="label">INVESTED</span><strong>${investedTotal.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</strong></Card>
-        <Card><span className="label">CURRENT VALUE</span><strong>${currentTotal.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</strong></Card>
-        <Card><span className="label">P&amp;L</span><strong className={pnl >= 0 ? "up" : "muted"}>{pnl >= 0 ? "+" : "-"}${Math.abs(pnl).toFixed(2)}</strong><span className="muted">{pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%</span></Card>
-        <Card><span className="label">COINS</span><strong>{holdings.length}</strong><span className="muted">Live priced</span></Card>
+  const allocation = useMemo(() => rows
+    .map((r) => ({ symbol: r.symbol, value: r.value }))
+    .sort((a, b) => b.value - a.value), [rows]);
+
+  const maxAbsPnl = Math.max(1, ...rows.map((r) => Math.abs(r.hpnl)));
+  const topPnL = [...rows].sort((a, b) => Math.abs(b.hpnl) - Math.abs(a.hpnl)).slice(0, 7);
+
+  const avatarFor = (sym: string) => sym.replace("USDT", "").slice(0, 3).toUpperCase();
+  const formatMoney = (value: number) => `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatQty = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 8 });
+
+  const allocationTotal = Math.max(currentTotal, 1);
+  const allocationStops = allocation.map((item, i) => {
+    const start = allocation.slice(0, i).reduce((sum, a) => sum + a.value, 0) / allocationTotal * 100;
+    const end = (start + item.value / allocationTotal * 100);
+    return `${i % 4 === 0 ? "#13c8ff" : i % 4 === 1 ? "#7b61ff" : i % 4 === 2 ? "#11d7a0" : "#f5bb1f"} ${start}% ${end}%`;
+  }).slice(0, 6);
+
+  const chartPoints = useMemo(() => {
+    const base = Math.max(1, investedTotal);
+    const bars = 18;
+    return Array.from({ length: bars }, (_, i) => {
+      const phase = i / (bars - 1);
+      const drift = 0.75 + phase * 0.23 + Math.sin(i * 1.15) * 0.045 + Math.cos(i * 0.52) * 0.025;
+      return Math.max(0.55, base * drift);
+    });
+  }, [investedTotal]);
+
+  const chartMax = Math.max(...chartPoints, 1);
+  const chartMin = Math.min(...chartPoints, chartMax - 1);
+  const chartPath = chartPoints.map((v, i) => {
+    const x = 8 + (i / (chartPoints.length - 1)) * 92;
+    const y = 92 - ((v - chartMin) / Math.max(1, chartMax - chartMin)) * 68;
+    return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+  }).join(" ");
+  const chartArea = `${chartPath} L 100 96 L 8 96 Z`;
+
+  const form = (
+    <div className="pred-portfolio-form">
+      <div className="pred-form-head">
+        <div>
+          <div className="pred-eyebrow">{editingId ? "EDIT POSITION" : "ADD TRADE"}</div>
+          <h3>{editingId ? "Update holding" : "New holding"}</h3>
+        </div>
+        <button className="pred-icon-btn" onClick={() => { setShowForm(false); if (editingId) resetForm(); }} aria-label="Close">×</button>
+      </div>
+      <div className="pred-form-grid">
+        <label>Coin<input list="portfolio-coins" value={symbol.replace("USDT", "")} onChange={(e: ChangeEvent<HTMLInputElement>) => setSymbol(e.target.value)} placeholder="BTC" /><datalist id="portfolio-coins">{marketSymbols.map((s) => <option key={s} value={s.replace("USDT", "")} />)}</datalist></label>
+        <label>Quantity<input type="number" min="0" step="any" value={quantity || ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setQuantity(Number(e.target.value) || 0)} /></label>
+        <label>Avg. entry price<input type="number" min="0" step="any" value={entryPrice || ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setEntryPrice(Number(e.target.value) || 0)} /></label>
+        <label>Total invested<input type="number" min="0" step="any" value={invested || ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setInvested(Number(e.target.value) || 0)} /></label>
+        <label>Plan<input value={plan} onChange={(e: ChangeEvent<HTMLInputElement>) => setPlan(e.target.value)} placeholder="Scalp / Swing / Long-term" /></label>
+        <label>Notes<input value={notes} onChange={(e: ChangeEvent<HTMLInputElement>) => setNotes(e.target.value)} placeholder="Why / thesis / risk" /></label>
+      </div>
+      <div className="pred-form-actions">
+        <button className="pred-secondary" type="button" onClick={calcInvestment}>Auto investment</button>
+        <button className="pred-secondary" type="button" onClick={calcQuantity}>Auto quantity</button>
+        <button className="pred-secondary" type="button" onClick={calcEntry}>Auto entry</button>
+        <button className="pred-primary" type="button" onClick={saveHolding} disabled={saving}>{saving ? "Saving..." : editingId ? "Update position" : "Add trade"}</button>
+      </div>
+      {message && <div className="pred-inline-message">{message}</div>}
+    </div>
+  );
+
+  return (
+    <div className="pred-portfolio-page">
+      <style>{`
+        .pred-portfolio-page{--p-bg:#030a11;--p-panel:rgba(6,18,29,.78);--p-panel2:rgba(7,23,37,.86);--p-border:rgba(94,157,210,.22);--p-text:#eaf4ff;--p-muted:#8ea5ba;--p-cyan:#48d7ff;--p-green:#12e4a1;--p-red:#ff556d;--p-blue:#4baeff;max-width:1500px;margin:0 auto;padding:22px 0 36px;color:var(--p-text)}
+        .pred-portfolio-page *{box-sizing:border-box}.pred-portfolio-page button,.pred-portfolio-page input{font:inherit}.pred-portfolio-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px}.pred-portfolio-brand{display:flex;align-items:center;gap:15px}.pred-portfolio-mark{width:58px;height:58px;border-radius:17px;display:grid;place-items:center;background:linear-gradient(145deg,rgba(17,222,204,.24),rgba(29,100,188,.13));border:1px solid rgba(73,210,255,.18);box-shadow:inset 0 0 28px rgba(17,219,202,.08)}.pred-portfolio-title{margin:0;font-size:31px;letter-spacing:-.04em}.pred-portfolio-sub{margin:3px 0 0;color:var(--p-muted);font-size:14px}.pred-portfolio-actions{display:flex;align-items:center;gap:10px}.pred-currency{position:relative}.pred-currency-btn{min-width:150px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 15px;border-radius:11px;border:1px solid var(--p-border);background:rgba(8,20,32,.8);color:var(--p-text);cursor:pointer}.pred-currency-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:10;min-width:150px;padding:6px;border:1px solid var(--p-border);border-radius:11px;background:#07111b;box-shadow:0 20px 50px rgba(0,0,0,.4)}.pred-currency-menu button{display:block;width:100%;padding:9px 10px;text-align:left;border:0;border-radius:7px;background:transparent;color:var(--p-text);cursor:pointer}.pred-currency-menu button:hover{background:rgba(72,215,255,.09)}.pred-last{color:var(--p-muted);font-size:12px;white-space:nowrap;text-align:right}.pred-refresh{width:42px;height:42px;border-radius:11px;border:1px solid var(--p-border);background:rgba(8,20,32,.8);color:var(--p-cyan);display:grid;place-items:center;cursor:pointer}.pred-refresh:disabled{opacity:.5;cursor:not-allowed}
+        .pred-tabs{display:flex;gap:0;align-items:center;margin-bottom:18px;border:1px solid var(--p-border);background:rgba(8,20,32,.62);border-radius:12px;overflow:hidden;max-width:680px}.pred-tab{flex:1;padding:12px 18px;background:transparent;border:0;border-right:1px solid rgba(94,157,210,.12);color:#9fb3c7;cursor:pointer}.pred-tab:last-child{border-right:0}.pred-tab.active{color:#eaf8ff;background:linear-gradient(180deg,rgba(34,128,186,.33),rgba(24,95,141,.16));box-shadow:inset 0 -1px 0 rgba(72,215,255,.38)}
+        .pred-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.pred-stat{min-height:102px;padding:16px 18px;border:1px solid var(--p-border);border-radius:13px;background:linear-gradient(180deg,rgba(9,26,40,.78),rgba(4,14,23,.82));box-shadow:inset 0 0 22px rgba(50,190,255,.025)}.pred-stat.green{border-color:rgba(18,228,161,.28);box-shadow:inset 0 0 24px rgba(18,228,161,.045)}.pred-stat.blue{border-color:rgba(66,173,255,.3)}.pred-stat-label{color:#9ab1c5;font-size:12px;margin-bottom:10px}.pred-stat-value{font-size:25px;font-weight:800;letter-spacing:-.03em}.pred-stat-note{margin-top:8px;color:var(--p-muted);font-size:12px}.pred-up{color:var(--p-green)}.pred-down{color:var(--p-red)}
+        .pred-main-grid{display:grid;grid-template-columns:1.55fr 1.15fr 1.15fr;gap:12px;margin-top:14px}.pred-panel{border:1px solid var(--p-border);border-radius:13px;background:linear-gradient(180deg,rgba(7,22,35,.77),rgba(3,12,20,.9));overflow:hidden}.pred-panel-head{display:flex;align-items:center;justify-content:space-between;padding:15px 16px 8px}.pred-panel-title{font-size:16px;font-weight:700}.pred-range{display:flex;gap:5px}.pred-range button{padding:7px 10px;border-radius:7px;border:1px solid rgba(94,157,210,.14);background:rgba(8,20,32,.6);color:#90a7bb;cursor:pointer}.pred-range button.active{color:#fff;border-color:rgba(72,215,255,.6);background:rgba(29,130,189,.18)}.pred-chart-wrap{padding:5px 12px 13px}.pred-chart{width:100%;height:200px;display:block}.pred-chart-grid{stroke:rgba(122,165,196,.08);stroke-width:.35}.pred-chart-line{fill:none;stroke:var(--p-green);stroke-width:1.25}.pred-chart-fill{fill:url(#predPortfolioFill)}.pred-chart-labels{display:flex;justify-content:space-between;padding:0 12px 12px;color:#6f879e;font-size:10px}.pred-donut-wrap{padding:6px 16px 15px;display:grid;grid-template-columns:150px 1fr;align-items:center;gap:18px}.pred-donut{width:150px;height:150px;border-radius:50%;position:relative;background:conic-gradient(${allocationStops.length?allocationStops.join(","):"#243c51 0 100%"})}.pred-donut:after{content:"";position:absolute;inset:31px;border-radius:50%;background:#07131f;border:1px solid rgba(93,154,202,.12)}.pred-donut-center{position:absolute;inset:0;display:grid;place-items:center;text-align:center;z-index:1}.pred-donut-value{font-size:20px;font-weight:800}.pred-donut-sub{font-size:11px;color:#839db1;margin-top:-42px}.pred-legend{display:flex;flex-direction:column;gap:10px;max-height:160px;overflow:auto}.pred-legend-row{display:flex;align-items:center;gap:8px;font-size:13px}.pred-dot{width:9px;height:9px;border-radius:50%}.pred-legend-row span:last-child{margin-left:auto;color:#a8bacb}.pred-pnl-list{padding:5px 15px 14px;display:flex;flex-direction:column;gap:10px}.pred-pnl-row{display:grid;grid-template-columns:78px 1fr auto;gap:10px;align-items:center;font-size:12px}.pred-pnl-name{display:flex;align-items:center;gap:7px}.pred-pnl-bar{height:10px;border-radius:999px;background:#081522;overflow:hidden;border:1px solid rgba(95,159,207,.1)}.pred-pnl-fill{height:100%;border-radius:999px}.pred-pnl-fill.up{background:linear-gradient(90deg,#0ed497,#18b8c6)}.pred-pnl-fill.down{background:linear-gradient(90deg,#ff526a,#cc354f)}.pred-pnl-value{white-space:nowrap;font-weight:700}.pred-pnl-value.up{color:var(--p-green)}.pred-pnl-value.down{color:var(--p-red)}
+        .pred-holdings-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px}.pred-holdings-title{font-size:20px;font-weight:800}.pred-holdings-tools{display:flex;align-items:center;gap:8px}.pred-search{min-width:220px;padding:11px 12px;border-radius:10px;border:1px solid var(--p-border);background:rgba(7,18,29,.7);color:var(--p-text);outline:none}.pred-search:focus{border-color:rgba(72,215,255,.5)}.pred-add{padding:11px 16px;border-radius:10px;border:1px solid rgba(18,228,161,.42);background:linear-gradient(180deg,rgba(17,195,151,.33),rgba(11,114,94,.24));color:#dffff5;font-weight:800;cursor:pointer}.pred-add:hover{filter:brightness(1.08)}
+        .pred-table-panel{overflow:hidden}.pred-table-wrap{overflow:auto}.pred-table{width:100%;border-collapse:collapse;min-width:1050px}.pred-table th,.pred-table td{padding:12px 10px;border-bottom:1px solid rgba(95,158,206,.1);text-align:left;white-space:nowrap}.pred-table th{color:#7790a5;font-size:11px;text-transform:uppercase;letter-spacing:.08em;background:rgba(8,22,34,.72);position:sticky;top:0;z-index:1}.pred-table td{font-size:13px;color:#dfeaf4}.pred-coin{display:flex;align-items:center;gap:9px}.pred-coin-badge{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:900;background:radial-gradient(circle at 30% 25%,#f5fbff,#577289 42%,#162b3a 100%);color:#0d1822;border:1px solid rgba(255,255,255,.17)}.pred-symbol{font-weight:800}.pred-symbol-sub{display:block;color:#6f879b;font-size:10px;margin-top:2px}.pred-plan{display:inline-flex;padding:6px 9px;border-radius:7px;border:1px solid rgba(72,215,255,.22);background:rgba(26,107,150,.12);color:#a8d6ef;font-size:11px;font-weight:800}.pred-note{max-width:160px;overflow:hidden;text-overflow:ellipsis;color:#8ba1b4}.pred-action{display:flex;gap:6px}.pred-row-btn{padding:7px 9px;border-radius:7px;border:1px solid rgba(92,157,205,.16);background:rgba(9,23,35,.8);color:#9ec4df;cursor:pointer}.pred-row-btn.danger{color:#ff8192;border-color:rgba(255,85,109,.18)}
+        .pred-form{margin-top:14px}.pred-portfolio-form{border:1px solid rgba(72,215,255,.22);border-radius:13px;background:linear-gradient(180deg,rgba(8,26,42,.95),rgba(3,13,23,.97));padding:16px}.pred-form-head{display:flex;align-items:flex-start;justify-content:space-between}.pred-eyebrow{font-size:10px;color:#7f98ad;letter-spacing:.08em}.pred-form-head h3{margin:5px 0 0;font-size:17px}.pred-icon-btn{width:32px;height:32px;border-radius:8px;border:1px solid rgba(94,157,210,.18);background:rgba(8,21,32,.7);color:#93a9bb;cursor:pointer;font-size:18px}.pred-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}.pred-form-grid label{display:flex;flex-direction:column;gap:6px;color:#8fa7bb;font-size:11px}.pred-form-grid input{padding:11px 12px;border-radius:9px;border:1px solid rgba(94,157,210,.18);background:#071521;color:#e8f4ff;outline:none}.pred-form-grid input:focus{border-color:rgba(72,215,255,.48)}.pred-form-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.pred-primary,.pred-secondary{padding:10px 13px;border-radius:9px;cursor:pointer}.pred-primary{border:1px solid rgba(18,228,161,.4);background:linear-gradient(180deg,rgba(18,228,161,.25),rgba(9,113,86,.22));color:#e2fff7;font-weight:800}.pred-secondary{border:1px solid rgba(94,157,210,.17);background:rgba(9,23,35,.75);color:#9eb5c8}.pred-inline-message{margin-top:9px;color:#9ac0d8;font-size:12px}
+        .pred-empty{padding:32px;color:#7890a4;text-align:center}.pred-view{margin-top:14px}.pred-mini-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.pred-mini{padding:16px;border:1px solid var(--p-border);border-radius:12px;background:rgba(7,21,33,.76)}.pred-mini-title{font-size:12px;color:#8fa7bc}.pred-mini-value{font-size:21px;font-weight:800;margin-top:7px}.pred-note-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.pred-note-card{padding:15px;border:1px solid var(--p-border);border-radius:12px;background:rgba(7,21,33,.76)}.pred-note-card strong{display:block;margin-bottom:8px}.pred-note-card p{margin:0;color:#8aa0b4;font-size:13px;line-height:1.5}
+        @media (max-width:1100px){.pred-stat-grid{grid-template-columns:repeat(2,1fr)}.pred-main-grid{grid-template-columns:1fr}.pred-form-grid{grid-template-columns:repeat(2,1fr)}}
+        @media (max-width:760px){.pred-portfolio-page{padding:14px}.pred-portfolio-head{align-items:flex-start;flex-direction:column}.pred-portfolio-actions{width:100%;flex-wrap:wrap}.pred-stat-grid{grid-template-columns:1fr 1fr}.pred-tabs{max-width:none;overflow:auto}.pred-tab{min-width:110px}.pred-donut-wrap{grid-template-columns:1fr}.pred-holdings-head{align-items:flex-start;flex-direction:column}.pred-holdings-tools{width:100%;flex-wrap:wrap}.pred-search{min-width:0;flex:1;width:100%}.pred-form-grid{grid-template-columns:1fr}.pred-mini-grid,.pred-note-grid{grid-template-columns:1fr}.pred-last{text-align:left}}
+      `}</style>
+
+      <div className="pred-portfolio-head">
+        <div className="pred-portfolio-brand">
+          <div className="pred-portfolio-mark"><Wallet size={28} /></div>
+          <div><h1 className="pred-portfolio-title">Portfolio</h1><p className="pred-portfolio-sub">Track Your Investments</p></div>
+        </div>
+        <div className="pred-portfolio-actions">
+          <div className="pred-currency">
+            <button className="pred-currency-btn" onClick={() => setCurrencyOpen((v) => !v)}><span>USD ($)</span><ChevronRight size={16} style={{ transform: currencyOpen ? "rotate(90deg)" : "rotate(0deg)" }} /></button>
+            {currencyOpen && <div className="pred-currency-menu"><button onClick={() => setCurrencyOpen(false)}>USD ($)</button></div>}
+          </div>
+          <div className="pred-last">Last Update<br /><strong>{lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"}</strong></div>
+          <button className="pred-refresh" title="Refresh prices" onClick={refreshPrices} disabled={loading}><RefreshCw size={19} /></button>
+        </div>
       </div>
 
-      <Card style={{ marginTop: "14px" }}>
-        <div className="card-head"><div><span className="label">{editingId ? "EDIT POSITION" : "ADD POSITION"}</span><h2>{editingId ? "Update holding" : "New holding"}</h2></div></div>
-        <div className="form-grid">
-          <label>Coin<input list="portfolio-coins" value={symbol.replace("USDT","")} onChange={(e: ChangeEvent<HTMLInputElement>)=>setSymbol(e.target.value)} placeholder="BTC" /><datalist id="portfolio-coins">{marketSymbols.map((s)=><option key={s} value={s.replace("USDT","")} />)}</datalist></label>
-          <label>Quantity<input type="number" min="0" step="any" value={quantity || ""} onChange={(e: ChangeEvent<HTMLInputElement>)=>setQuantity(Number(e.target.value)||0)} /></label>
-          <label>Entry price <span className="muted">USD</span><input type="number" min="0" step="any" value={entryPrice || ""} onChange={(e: ChangeEvent<HTMLInputElement>)=>setEntryPrice(Number(e.target.value)||0)} /></label>
-          <label>Total investment <span className="muted">USD</span><input type="number" min="0" step="any" value={invested || ""} onChange={(e: ChangeEvent<HTMLInputElement>)=>setInvested(Number(e.target.value)||0)} /></label>
-          <label>Plan<input value={plan} onChange={(e: ChangeEvent<HTMLInputElement>)=>setPlan(e.target.value)} placeholder="Scalp / Swing / Long-term" /></label>
-          <label>Notes<input value={notes} onChange={(e: ChangeEvent<HTMLInputElement>)=>setNotes(e.target.value)} placeholder="Why / thesis / risk" /></label>
-        </div>
-        <div style={{ display:"flex", gap:"8px", flexWrap:"wrap", marginTop:"10px" }}>
-          <button className="chip" type="button" onClick={calcInvestment}>Auto-calc Investment</button>
-          <button className="chip" type="button" onClick={calcQuantity}>Auto-calc Quantity</button>
-          <button className="chip" type="button" onClick={calcEntry}>Auto-calc Entry</button>
-          <button className="glass-btn" type="button" onClick={saveHolding} disabled={saving}>{saving ? "Saving..." : editingId ? "Update position" : "Add position"}</button>
-          {editingId && <button className="chip" type="button" onClick={resetForm}>Cancel</button>}
-        </div>
-        {message && <p className="muted" style={{ marginTop:"10px" }}>{message}</p>}
-      </Card>
+      <div className="pred-tabs">
+        {(["Overview", "Holdings", "Performance", "History", "Notes"] as PortfolioTab[]).map((tab) => (
+          <button key={tab} className={`pred-tab${activeTab === tab ? " active" : ""}`} onClick={() => setActiveTab(tab)}>{tab}</button>
+        ))}
+      </div>
 
-      <Card style={{ marginTop:"14px" }}>
-        <div className="card-head"><div><span className="label">HOLDINGS</span><h2>Live positions</h2></div><span className="muted">Current prices update every 30s</span></div>
-        {holdings.length === 0 ? <div className="muted" style={{ padding:"24px 0" }}>No holdings yet. Add your first position above.</div> : (
-          <div className="table-wrap"><table><thead><tr><th>COIN</th><th>QTY</th><th>ENTRY</th><th>INVESTED</th><th>CURRENT</th><th>P&amp;L</th><th>PLAN</th><th></th></tr></thead><tbody>
-            {holdings.map((h)=>{const current=prices[h.symbol] || h.entryPrice; const value=h.quantity*current; const hpnl=value-h.invested; return <tr key={h.id}><td><b>{h.symbol.replace("USDT","/USDT")}</b></td><td className="mono">{h.quantity.toLocaleString(undefined,{maximumFractionDigits:8})}</td><td className="mono">${formatPrice(h.entryPrice)}</td><td className="mono">${h.invested.toFixed(2)}</td><td className="mono">${value.toFixed(2)}</td><td className={hpnl>=0?"up":"muted"}>{hpnl>=0?"+":"-"}${Math.abs(hpnl).toFixed(2)}</td><td>{h.plan}</td><td><button className="chip" type="button" onClick={()=>startEdit(h)}>Edit</button> <button className="chip" type="button" onClick={()=>deleteHolding(h.id)}>Delete</button></td></tr>})}
-          </tbody></table></div>
-        )}
-      </Card>
+      {activeTab !== "Overview" && activeTab !== "Holdings" && (
+        <div className="pred-view">
+          {activeTab === "Performance" && <div className="pred-mini-grid"><div className="pred-mini"><div className="pred-mini-title">Total P&amp;L</div><div className={`pred-mini-value ${pnl >= 0 ? "pred-up" : "pred-down"}`}>{pnl >= 0 ? "+" : "-"}{formatMoney(Math.abs(pnl))}</div></div><div className="pred-mini"><div className="pred-mini-title">Return</div><div className={`pred-mini-value ${pnlPct >= 0 ? "pred-up" : "pred-down"}`}>{pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%</div></div><div className="pred-mini"><div className="pred-mini-title">Open Positions</div><div className="pred-mini-value">{holdings.length}</div></div></div>}
+          {activeTab === "History" && <div className="pred-panel pred-table-panel"><div className="pred-panel-head"><span className="pred-panel-title">Position History</span><span className="pred-last">Saved in your Supabase portfolio</span></div><div className="pred-table-wrap"><table className="pred-table"><thead><tr><th>COIN</th><th>DATE</th><th>INVESTED</th><th>PLAN</th></tr></thead><tbody>{[...holdings].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).map(h=><tr key={h.id}><td><span className="pred-symbol">{h.symbol.replace("USDT","")}</span></td><td>{new Date(h.createdAt).toLocaleString()}</td><td className="mono">{formatMoney(h.invested)}</td><td><span className="pred-plan">{h.plan}</span></td></tr>)}</tbody></table></div></div>}
+          {activeTab === "Notes" && <div className="pred-note-grid">{holdings.filter(h=>h.notes).map(h=><div key={h.id} className="pred-note-card"><strong>{h.symbol.replace("USDT","")}</strong><p>{h.notes}</p></div>)}{holdings.filter(h=>h.notes).length === 0 && <div className="pred-note-card"><strong>No notes yet</strong><p>Add notes to your positions and they will appear here.</p></div>}</div>}
+        </div>
+      )}
+
+      {(activeTab === "Overview" || activeTab === "Holdings") && <>
+        <div className="pred-stat-grid">
+          <div className="pred-stat"><div className="pred-stat-label">TOTAL INVESTED</div><div className="pred-stat-value">{formatMoney(investedTotal)}</div></div>
+          <div className="pred-stat green"><div className="pred-stat-label">CURRENT VALUE</div><div className="pred-stat-value">{formatMoney(currentTotal)} <span className={pnlPct >= 0 ? "pred-up" : "pred-down"} style={{ fontSize: 16 }}>{pnlPct >= 0 ? "↑" : "↓"} {Math.abs(pnlPct).toFixed(2)}%</span></div></div>
+          <div className="pred-stat green"><div className="pred-stat-label">TOTAL P&amp;L</div><div className="pred-stat-value pred-up">{pnl >= 0 ? "+" : "-"}{formatMoney(Math.abs(pnl))} <span className={pnlPct >= 0 ? "pred-up" : "pred-down"} style={{ fontSize: 16 }}>{pnlPct >= 0 ? "↑" : "↓"} {Math.abs(pnlPct).toFixed(2)}%</span></div></div>
+          <div className="pred-stat blue"><div className="pred-stat-label">TOTAL COINS</div><div className="pred-stat-value">{holdings.length}</div></div>
+        </div>
+
+        {activeTab === "Overview" && <div className="pred-main-grid">
+          <div className="pred-panel">
+            <div className="pred-panel-head"><div className="pred-panel-title">Portfolio Chart</div><div className="pred-range">{["1D", "1W", "1M", "3M", "1Y", "ALL"].map((r) => <button key={r} className={r === "1M" ? "active" : ""}>{r}</button>)}</div></div>
+            <div className="pred-chart-wrap"><svg className="pred-chart" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="predPortfolioFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#13d8a4" stopOpacity=".33"/><stop offset="100%" stopColor="#13d8a4" stopOpacity="0"/></linearGradient></defs>{[18,34,50,66,82].map(y=><line key={y} x1="8" y1={y} x2="98" y2={y} className="pred-chart-grid"/>)}<path d={chartArea} className="pred-chart-fill"/><path d={chartPath} className="pred-chart-line"/></svg></div>
+            <div className="pred-chart-labels"><span>Start</span><span>Recent</span><span>Current</span></div>
+          </div>
+
+          <div className="pred-panel">
+            <div className="pred-panel-head"><div className="pred-panel-title">Allocation</div><span className="pred-last">{formatMoney(currentTotal)}</span></div>
+            <div className="pred-donut-wrap">
+              <div className="pred-donut" style={{ background: allocationStops.length ? `conic-gradient(${allocationStops.join(",")})` : "conic-gradient(#243c51 0 100%)" }}><div className="pred-donut-center"><div><div className="pred-donut-value">{formatMoney(currentTotal).replace(".00","")}</div><div className="pred-donut-sub">Total Value</div></div></div></div>
+              <div className="pred-legend">{allocation.slice(0,6).map((a,i)=><div className="pred-legend-row" key={a.symbol}><span className="pred-dot" style={{ background: ["#13c8ff","#7b61ff","#11d7a0","#f5bb1f"][i%4] }} /> <span>{a.symbol.replace("USDT","")}</span><span>{(a.value / allocationTotal * 100).toFixed(1)}%</span></div>)}{allocation.length > 6 && <div className="pred-legend-row"><span className="pred-dot" style={{ background: "#6c7c8b" }} /><span>Others</span><span>{(allocation.slice(6).reduce((s,a)=>s+a.value,0)/allocationTotal*100).toFixed(1)}%</span></div>}</div>
+            </div>
+          </div>
+
+          <div className="pred-panel">
+            <div className="pred-panel-head"><div className="pred-panel-title">Live P&amp;L (By Coin)</div><span className="pred-last">PNL ($)</span></div>
+            <div className="pred-pnl-list">{topPnL.map((r)=>{const up=r.hpnl>=0;const width=Math.max(5,Math.min(100,Math.abs(r.hpnl)/maxAbsPnl*100));return <div className="pred-pnl-row" key={r.id}><div className="pred-pnl-name"><span className="pred-coin-badge">{avatarFor(r.symbol)}</span><span>{r.symbol.replace("USDT","")}</span></div><div className="pred-pnl-bar"><div className={`pred-pnl-fill ${up?"up":"down"}`} style={{width:`${width}%`}} /></div><div className={`pred-pnl-value ${up?"up":"down"}`}>{up?"+":"-"}{formatMoney(Math.abs(r.hpnl))}</div></div>})}</div>
+          </div>
+        </div>}
+
+        <div className="pred-holdings-head">
+          <div className="pred-holdings-title">My Holdings ({holdings.length})</div>
+          <div className="pred-holdings-tools"><input className="pred-search" placeholder="Search coin..." /><button className="pred-add" onClick={() => { setShowForm(true); setActiveTab("Holdings"); }}>＋ Add Trade</button></div>
+        </div>
+
+        {showForm && <div className="pred-form">{form}</div>}
+
+        <div className="pred-panel pred-table-panel">
+          {holdings.length === 0 ? <div className="pred-empty">No holdings yet. Add your first position above.</div> : (
+            <div className="pred-table-wrap"><table className="pred-table"><thead><tr><th>#</th><th>COIN</th><th>QUANTITY</th><th>AVG. ENTRY PRICE</th><th>INVESTED</th><th>CURRENT PRICE</th><th>CURRENT VALUE</th><th>P&amp;L</th><th>P&amp;L %</th><th>PLAN</th><th>NOTES</th><th>ACTION</th></tr></thead><tbody>
+              {rows.map((r, idx) => <tr key={r.id}><td>{idx+1}</td><td><div className="pred-coin"><span className="pred-coin-badge">{avatarFor(r.symbol)}</span><span><span className="pred-symbol">{r.symbol.replace("USDT","")}</span><span className="pred-symbol-sub">{r.symbol}</span></span></div></td><td className="mono">{formatQty(r.quantity)}</td><td className="mono">${formatPrice(r.entryPrice)}</td><td className="mono">{formatMoney(r.invested)}</td><td className="mono">${formatPrice(r.current)}</td><td className="mono">{formatMoney(r.value)}</td><td className={r.hpnl>=0?"pred-up":"pred-down"}>{r.hpnl>=0?"+":"-"}{formatMoney(Math.abs(r.hpnl))}</td><td className={r.hpnlPct>=0?"pred-up":"pred-down"}>{r.hpnlPct>=0?"+":""}{r.hpnlPct.toFixed(2)}%</td><td><span className="pred-plan">{r.plan}</span></td><td><span className="pred-note" title={r.notes}>{r.notes || "—"}</span></td><td><div className="pred-action"><button className="pred-row-btn" onClick={()=>startEdit(r)}>Edit</button><button className="pred-row-btn danger" onClick={()=>deleteHolding(r.id)}>Delete</button></div></td></tr>)}
+            </tbody></table></div>
+          )}
+        </div>
+      </>}
     </div>
   );
 }
