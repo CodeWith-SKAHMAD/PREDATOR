@@ -1009,6 +1009,8 @@ function Signals({
   const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [seconds, setSeconds] = useState(0);
   const scanBusyRef = useRef(false);
+  const lastAutoAttemptWindowRef = useRef<number | null>(null);
+  const lastAutoAttemptAtRef = useRef(0);
 
   const categoryLabel = (score: number) => {
     if (score >= 120) return "Extended / Pumped";
@@ -1083,7 +1085,8 @@ function Signals({
       // The API decides whether this window already has the canonical
       // shared snapshot. At a real 30-minute boundary, a new snapshot is
       // generated exactly once and then shared with every device/account.
-      const response = await fetch(`/api/signals?windowId=${Math.floor(Date.now() / SCAN_WINDOW_MS)}&ts=${Date.now()}`, {
+      const forceParam = mode === "manual" ? "&force=1" : "";
+      const response = await fetch(`/api/signals?windowId=${Math.floor(Date.now() / SCAN_WINDOW_MS)}&ts=${Date.now()}${forceParam}`, {
         cache: "no-store",
       });
       const payload = await response.json();
@@ -1137,13 +1140,21 @@ function Signals({
       const remaining = Math.max(0, Math.ceil((target - now) / 1000));
       setSeconds(remaining);
 
-      // Do not depend on hitting an exact millisecond boundary. As soon as
-      // the clock enters the next 30-minute window, trigger the new scan.
+      const appliedWindow = appliedWindowRef.current;
+      const pastBoundary = appliedWindow !== null && currentWindowId > appliedWindow;
+      const retryDue = now - lastAutoAttemptAtRef.current >= 10000;
+      const alreadyAttemptedThisWindow = lastAutoAttemptWindowRef.current === currentWindowId;
+
+      // The real 30-minute boundary is the automatic refresh trigger. We do
+      // not wait for an exact millisecond and we retry failed scans instead of
+      // leaving the page stuck at 00:00 until a browser refresh.
       if (
-        appliedWindowRef.current !== null &&
-        currentWindowId > appliedWindowRef.current &&
-        !scanBusyRef.current
+        pastBoundary &&
+        !scanBusyRef.current &&
+        (!alreadyAttemptedThisWindow || retryDue)
       ) {
+        lastAutoAttemptWindowRef.current = currentWindowId;
+        lastAutoAttemptAtRef.current = now;
         void loadSignals("auto");
       }
     }, 500);
