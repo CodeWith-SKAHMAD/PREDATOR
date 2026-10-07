@@ -5,6 +5,9 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 60;
 
+const CURRENT_ENGINE_VERSION = "scalp-v5-global-history";
+const WINDOW_MS = 30 * 60 * 1000;
+
 const SPOT_BASES = [
   "https://data-api.binance.vision",
   "https://api.binance.com",
@@ -132,6 +135,7 @@ type ScanCache = {
   windowId: number;
   data: {
     ok: true;
+    windowId: number;
     updatedAt: string;
     scanId: string;
     btcRegime: "Bullish" | "Bearish" | "Neutral";
@@ -145,8 +149,8 @@ let scanCache: ScanCache | null = null;
 // One canonical scan snapshot for every visitor/account/browser.
 // The service-role key is server-only and must NEVER be exposed to the client.
 const sharedSupabase =
-  process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+  process.env.NEXT_PUBLIC_SUPABASE_URL && (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)
+    ? createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)!, {
         auth: { autoRefreshToken: false, persistSession: false },
       })
     : null;
@@ -158,11 +162,131 @@ async function readSharedSnapshot(windowId: number): Promise<ScanCache["data"] |
       .from("signal_scan_snapshots")
       .select("payload")
       .eq("window_id", windowId)
+      .eq("engine_version", CURRENT_ENGINE_VERSION)
       .maybeSingle();
     if (error || !data?.payload) return null;
     return data.payload as ScanCache["data"];
   } catch {
     return null;
+  }
+}
+
+type GlobalHistoryRow = {
+  id: number;
+  window_id: number;
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  score: number;
+  status: string;
+  price: number | null;
+  signal_time: string;
+  expires_at: string | null;
+  volume_spike: number | null;
+  rsi: number | null;
+  tool_scores: Record<string, ToolResult> & { __meta?: Record<string, unknown> };
+  reason: string | null;
+};
+
+let legacyHistoryMigrated = false;
+
+async function migrateLegacyHistory() {
+  if (!sharedSupabase || legacyHistoryMigrated) return;
+  try {
+    const { data, error } = await sharedSupabase
+      .from("signal_history")
+      .select("symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason")
+      .order("signal_time", { ascending: false })
+      .limit(5000);
+
+    if (error || !data?.length) {
+      legacyHistoryMigrated = true;
+      return;
+    }
+
+    const rows = data
+      .map((row: any) => {
+        const timestamp = Date.parse(row.signal_time);
+        if (!Number.isFinite(timestamp)) return null;
+        return {
+          window_id: Math.floor(timestamp / WINDOW_MS),
+          symbol: row.symbol,
+          direction: row.direction,
+          score: row.score,
+          status: row.status,
+          price: row.price,
+          signal_time: row.signal_time,
+          expires_at: row.expires_at,
+          volume_spike: row.volume_spike,
+          rsi: row.rsi,
+          tool_scores: row.tool_scores ?? {},
+          reason: row.reason,
+        };
+      })
+      .filter(Boolean);
+
+    if (rows.length) {
+      await sharedSupabase
+        .from("signal_history_global")
+        .upsert(rows, { onConflict: "window_id,symbol", ignoreDuplicates: true });
+    }
+  } catch {
+    // Migration is best-effort; the canonical current scan can still work.
+  } finally {
+    legacyHistoryMigrated = true;
+  }
+}
+
+async function syncSnapshotHistory(data: ScanCache["data"]) {
+  if (!sharedSupabase || !data.rows?.length) return;
+  try {
+    const rows = data.rows.map((signal) => ({
+      window_id: data.windowId,
+      symbol: signal.symbol,
+      direction: signal.direction,
+      score: signal.score,
+      status: signal.status,
+      price: signal.price,
+      signal_time: signal.capturedAt,
+      expires_at: signal.expiresAt,
+      volume_spike: signal.volumeSpike,
+      rsi: signal.rsi,
+      tool_scores: {
+        ...signal.tools,
+        __meta: {
+          change15m: signal.change15m,
+          change1h: signal.change1h,
+          support: signal.support,
+          resistance: signal.resistance,
+          supportDistance: signal.supportDistance,
+          resistanceDistance: signal.resistanceDistance,
+          fundingRate: signal.fundingRate,
+          baseAsset: signal.baseAsset,
+          capturedAt: signal.capturedAt,
+        },
+      },
+      reason: signal.reasons.join(" · "),
+    }));
+
+    await sharedSupabase
+      .from("signal_history_global")
+      .upsert(rows, { onConflict: "window_id,symbol", ignoreDuplicates: true });
+  } catch {
+    // History should not prevent the market scan response.
+  }
+}
+
+async function readGlobalHistory(): Promise<GlobalHistoryRow[]> {
+  if (!sharedSupabase) return [];
+  try {
+    const { data, error } = await sharedSupabase
+      .from("signal_history_global")
+      .select("id, window_id, symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason")
+      .order("signal_time", { ascending: false })
+      .limit(500);
+    if (error) return [];
+    return (data ?? []) as GlobalHistoryRow[];
+  } catch {
+    return [];
   }
 }
 
@@ -173,12 +297,17 @@ async function publishCanonicalSnapshot(
   if (!sharedSupabase) return data;
 
   try {
-    // First writer wins for this 30-minute window.
+    // First writer wins for this window + engine version.
     await sharedSupabase
       .from("signal_scan_snapshots")
       .upsert(
-        { window_id: windowId, payload: data, created_at: data.updatedAt },
-        { onConflict: "window_id", ignoreDuplicates: true },
+        {
+          window_id: windowId,
+          engine_version: CURRENT_ENGINE_VERSION,
+          payload: data,
+          created_at: data.updatedAt,
+        },
+        { onConflict: "window_id,engine_version", ignoreDuplicates: true },
       );
 
     const canonical = await readSharedSnapshot(windowId);
@@ -754,14 +883,23 @@ function rsiSlope(values: number[]): number {
 }
 
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const url = new URL(request.url);
+
+    if (url.searchParams.get("history") === "1") {
+      await migrateLegacyHistory();
+      return NextResponse.json({ ok: true, history: await readGlobalHistory() });
+    }
+
     const { windowId, scanId } = windowMeta();
 
     // Database snapshot is the source of truth so every user gets the exact
     // same coins, scores, direction, levels and timestamps for a scan window.
     const sharedSnapshot = await readSharedSnapshot(windowId);
     if (sharedSnapshot) {
+      await migrateLegacyHistory();
+      await syncSnapshotHistory(sharedSnapshot);
       scanCache = { windowId, data: sharedSnapshot };
       return NextResponse.json(sharedSnapshot);
     }
@@ -769,6 +907,8 @@ export async function GET() {
     // Local process cache is only a fast fallback before the shared snapshot
     // is written. It is never preferred over the shared source of truth.
     if (scanCache && scanCache.windowId === windowId) {
+      await migrateLegacyHistory();
+      await syncSnapshotHistory(scanCache.data);
       return NextResponse.json(scanCache.data);
     }
 
@@ -1072,6 +1212,7 @@ export async function GET() {
     const windowStartAt = new Date(windowId * 30 * 60 * 1000).toISOString();
     const response = {
       ok: true as const,
+      windowId,
       updatedAt: new Date().toISOString(),
       windowStartAt,
       nextScanAt,
@@ -1082,6 +1223,8 @@ export async function GET() {
     };
 
     const canonical = await publishCanonicalSnapshot(windowId, response);
+    await migrateLegacyHistory();
+    await syncSnapshotHistory(canonical);
     scanCache = { windowId, data: canonical };
     return NextResponse.json(canonical);
   } catch (error) {
