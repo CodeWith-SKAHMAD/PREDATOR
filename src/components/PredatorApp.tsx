@@ -1445,42 +1445,23 @@ function Signals({
                   display: "grid",
                   gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
                   gap: 10,
+                  alignItems: "start",
                 }}
               >
-                {history
-                  .filter((item) =>
-                    !item.expires_at || new Date(item.expires_at).getTime() <= Date.now()
-                  )
+                {Object.entries(historyGroups)
+                  .sort(([, a], [, b]) => {
+                    const aTime = new Date(a[0]?.signal_time || 0).getTime();
+                    const bTime = new Date(b[0]?.signal_time || 0).getTime();
+                    return bTime - aTime;
+                  })
                   .slice(0, 48)
-                  .map((item) => {
-                  const meta = item.tool_scores?.__meta;
-                  const expired = true;
-
-                  return (
-                    <CompactSignalCard
-                      key={item.id}
-                      baseAsset={meta?.baseAsset || item.symbol.replace("USDT", "")}
-                      direction={item.direction}
-                      score={item.score}
-                      status={item.status}
-                      price={
-                        typeof meta?.triggerPrice === "number"
-                          ? meta.triggerPrice
-                          : Number(item.price ?? 0)
-                      }
-                      change15m={typeof meta?.change15m === "number" ? meta.change15m : null}
-                      change1h={typeof meta?.change1h === "number" ? meta.change1h : null}
-                      support={typeof meta?.support === "number" ? meta.support : null}
-                      resistance={typeof meta?.resistance === "number" ? meta.resistance : null}
-                      supportDistance={typeof meta?.supportDistance === "number" ? meta.supportDistance : null}
-                      resistanceDistance={typeof meta?.resistanceDistance === "number" ? meta.resistanceDistance : null}
-                      fundingRate={typeof meta?.fundingRate === "number" ? meta.fundingRate : null}
-                      capturedAt={meta?.capturedAt || item.signal_time}
-                      expired={expired}
-                      onClick={() => onCoinClick(item.symbol)}
+                  .map(([symbol, items]) => (
+                    <HistorySignalStack
+                      key={symbol}
+                      items={items}
+                      onCoinClick={onCoinClick}
                     />
-                  );
-                })}
+                  ))}
               </div>
             )}
           </Card>
@@ -1490,6 +1471,213 @@ function Signals({
   );
 }
 
+
+function HistorySignalStack({
+  items,
+  onCoinClick,
+}: {
+  items: Array<{
+    id: number;
+    window_id: number;
+    symbol: string;
+    direction: "LONG" | "SHORT";
+    score: number;
+    status: string;
+    price: number | null;
+    signal_time: string;
+    expires_at: string | null;
+    tool_scores: {
+      __meta?: {
+        change15m: number;
+        change1h: number;
+        support: number;
+        resistance: number;
+        supportDistance: number;
+        resistanceDistance: number;
+        fundingRate: number | null;
+        baseAsset: string;
+        capturedAt: string;
+        triggerPrice?: number;
+      };
+    } | null;
+  }>;
+  onCoinClick: (symbol: string) => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const pointerStartRef = useRef<number | null>(null);
+
+  const ordered = useMemo(() => {
+    return [...items].sort(
+      (a, b) =>
+        new Date(b.signal_time || 0).getTime() -
+        new Date(a.signal_time || 0).getTime()
+    );
+  }, [items]);
+
+  useEffect(() => {
+    setIndex((current) => Math.min(current, Math.max(0, ordered.length - 1)));
+  }, [ordered.length]);
+
+  const showPrevious = () => {
+    setIndex((current) => Math.min(ordered.length - 1, current + 1));
+  };
+
+  const showNewer = () => {
+    setIndex((current) => Math.max(0, current - 1));
+  };
+
+  const renderCard = (item: (typeof ordered)[number], offset: number) => {
+    const meta = item.tool_scores?.__meta;
+    return (
+      <div
+        key={`${item.id}-${offset}`}
+        style={{
+          position: "absolute",
+          inset: 0,
+          transform: `translate(${offset * 7}px, ${offset * 7}px) scale(${1 - offset * 0.018})`,
+          transformOrigin: "center top",
+          zIndex: 40 - offset,
+          opacity: offset === 0 ? 1 : Math.max(0.58, 1 - offset * 0.12),
+          transition: "transform .24s ease, opacity .24s ease",
+          pointerEvents: offset === 0 ? "auto" : "none",
+        }}
+      >
+        <CompactSignalCard
+          baseAsset={meta?.baseAsset || item.symbol.replace("USDT", "")}
+          direction={item.direction}
+          score={item.score}
+          status={item.status}
+          price={
+            typeof meta?.triggerPrice === "number"
+              ? meta.triggerPrice
+              : Number(item.price ?? 0)
+          }
+          change15m={typeof meta?.change15m === "number" ? meta.change15m : null}
+          change1h={typeof meta?.change1h === "number" ? meta.change1h : null}
+          support={typeof meta?.support === "number" ? meta.support : null}
+          resistance={typeof meta?.resistance === "number" ? meta.resistance : null}
+          supportDistance={typeof meta?.supportDistance === "number" ? meta.supportDistance : null}
+          resistanceDistance={typeof meta?.resistanceDistance === "number" ? meta.resistanceDistance : null}
+          fundingRate={typeof meta?.fundingRate === "number" ? meta.fundingRate : null}
+          capturedAt={meta?.capturedAt || item.signal_time}
+          expired={true}
+          onClick={() => onCoinClick(item.symbol)}
+        />
+      </div>
+    );
+  };
+
+  const visible = ordered.slice(index, index + 3);
+  const canGoOlder = index < ordered.length - 1;
+  const canGoNewer = index > 0;
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        minHeight: 398,
+        userSelect: "none",
+        touchAction: "pan-y",
+      }}
+      onPointerDown={(event) => {
+        pointerStartRef.current = event.clientX;
+      }}
+      onPointerUp={(event) => {
+        const start = pointerStartRef.current;
+        pointerStartRef.current = null;
+        if (start === null || ordered.length <= 1) return;
+        const delta = event.clientX - start;
+        if (delta < -45) showPrevious();
+        else if (delta > 45) showNewer();
+      }}
+      onWheel={(event) => {
+        if (Math.abs(event.deltaY) < 10 || ordered.length <= 1) return;
+        if (event.deltaY > 0) showPrevious();
+        else showNewer();
+      }}
+    >
+      {[...visible].reverse().map((item, reversedOffset) => {
+        const offset = visible.length - 1 - reversedOffset;
+        return renderCard(item, offset);
+      })}
+
+      {ordered.length > 1 && (
+        <div
+          style={{
+            position: "absolute",
+            left: 10,
+            right: 10,
+            bottom: 9,
+            zIndex: 60,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            pointerEvents: "none",
+          }}
+        >
+          <button
+            type="button"
+            disabled={!canGoNewer}
+            onClick={(event) => {
+              event.stopPropagation();
+              showNewer();
+            }}
+            style={{
+              pointerEvents: "auto",
+              width: 30,
+              height: 30,
+              borderRadius: 9,
+              border: "1px solid rgba(255,255,255,.13)",
+              background: "rgba(7,12,18,.82)",
+              color: canGoNewer ? "#dce8f2" : "#49545f",
+              cursor: canGoNewer ? "pointer" : "default",
+            }}
+            aria-label="Show newer signal"
+          >
+            ‹
+          </button>
+
+          <span
+            style={{
+              padding: "5px 9px",
+              borderRadius: 999,
+              border: "1px solid rgba(255,255,255,.11)",
+              background: "rgba(7,12,18,.82)",
+              color: "#a4b0bc",
+              fontSize: 10,
+              letterSpacing: ".04em",
+              pointerEvents: "none",
+            }}
+          >
+            {index + 1}/{ordered.length} · SWIPE
+          </span>
+
+          <button
+            type="button"
+            disabled={!canGoOlder}
+            onClick={(event) => {
+              event.stopPropagation();
+              showPrevious();
+            }}
+            style={{
+              pointerEvents: "auto",
+              width: 30,
+              height: 30,
+              borderRadius: 9,
+              border: "1px solid rgba(255,255,255,.13)",
+              background: "rgba(7,12,18,.82)",
+              color: canGoOlder ? "#dce8f2" : "#49545f",
+              cursor: canGoOlder ? "pointer" : "default",
+            }}
+            aria-label="Show older signal"
+          >
+            ›
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
   const [interval, setIntervalValue] = useState<"1h" | "4h" | "1d">("1h");
