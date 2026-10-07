@@ -3,9 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-export const maxDuration = 60;
+export const maxDuration = 300;
 
-const CURRENT_ENGINE_VERSION = "scalp-v6-global-canonical";
+const CURRENT_ENGINE_VERSION = "scalp-v7-global-canonical";
 const WINDOW_MS = 30 * 60 * 1000;
 
 const SPOT_BASES = [
@@ -332,7 +332,7 @@ async function publishCanonicalSnapshot(
   return canonical;
 }
 
-async function fetchJson<T>(bases: string[], path: string, timeoutMs = 6500): Promise<T> {
+async function fetchJson<T>(bases: string[], path: string, timeoutMs = 5000): Promise<T> {
   let lastError = "Market data request failed";
 
   for (const base of bases) {
