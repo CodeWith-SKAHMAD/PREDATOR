@@ -1964,6 +1964,7 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [sourceNote, setSourceNote] = useState("");
+  const [chartTf, setChartTf] = useState("1h");
 
   const load = async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -2055,35 +2056,21 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
         }
       }
 
-      const priceStructureScore =
-        ema21 !== null && ema50 !== null
-          ? price > ema21 && ema21 > ema50
-            ? 90
-            : price > ema21 || ema21 > ema50
-              ? 65
-              : 30
-          : null;
-      const momentumScore =
-        rsi === null
-          ? null
-          : (rsi >= 55 && rsi <= 68) || (rsi >= 32 && rsi <= 45 && change1h < 0)
-            ? 80
-            : rsi >= 50
-              ? 65
-              : 40;
+      const priceStructureScore = ema21 !== null && ema50 !== null
+        ? price > ema21 && ema21 > ema50 ? 90 : price > ema21 || ema21 > ema50 ? 65 : 30
+        : null;
+      const momentumScore = rsi === null
+        ? null
+        : (rsi >= 55 && rsi <= 68) || (rsi >= 32 && rsi <= 45 && change1h < 0)
+          ? 80 : rsi >= 50 ? 65 : 40;
       const volumeRatio = k1h.length >= 21
         ? Number(k1h.at(-1)?.[5]) / (k1h.slice(-21, -1).reduce((sum, k) => sum + Number(k[5]), 0) / 20)
         : null;
       const volumeScore = volumeRatio === null ? null : Math.max(25, Math.min(95, 55 + (volumeRatio - 1) * 25));
       const derivativesScore = oiUsd === null && fundingRate === null
-        ? null
-        : Math.max(25, Math.min(90, 65 + (change1h >= 0 ? 12 : -10) - Math.min(Math.abs((fundingRate || 0) * 10000), 18)));
-      const liquidationScore = atrPercent === null
-        ? null
-        : atrPercent <= 2 ? 85 : atrPercent <= 4 ? 65 : 40;
-      const onchainScore = mvrv === null || nupl === null
-        ? null
-        : Math.max(20, Math.min(90, (mvrv >= 1 && mvrv <= 2.5 ? 80 : mvrv > 2.5 && mvrv < 3.5 ? 65 : mvrv >= 3.5 ? 35 : 55)) + (nupl > 0 && nupl < 0.5 ? 8 : nupl >= 0.5 ? -8 : 0));
+        ? null : Math.max(25, Math.min(90, 65 + (change1h >= 0 ? 12 : -10) - Math.min(Math.abs((fundingRate || 0) * 10000), 18)));
+      const liquidationScore = atrPercent === null ? null : atrPercent <= 2 ? 85 : atrPercent <= 4 ? 65 : 40;
+      const onchainScore = mvrv === null || nupl === null ? null : Math.max(20, Math.min(90, (mvrv >= 1 && mvrv <= 2.5 ? 80 : mvrv > 2.5 && mvrv < 3.5 ? 65 : mvrv >= 3.5 ? 35 : 55) + (nupl > 0 && nupl < 0.5 ? 8 : nupl >= 0.5 ? -8 : 0)));
       const etfScore = etfFlow === null ? null : etfFlow > 0 ? 85 : etfFlow < 0 ? 35 : 60;
 
       const weighted = [
@@ -2095,25 +2082,15 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
         ? Math.round(usable.reduce((sum, [weight, score]) => sum + weight * (score || 0), 0) / usable.reduce((sum, [weight]) => sum + weight, 0))
         : 0;
 
-      const marketCondition =
-        change1h > 0.8 && price > (ema21 || price) ? "Bullish" :
-        change1h < -0.8 && price < (ema21 || price) ? "Bearish" : "Range / Mixed";
-
+      const marketCondition = change1h > 0.8 && price > (ema21 || price)
+        ? "Bullish" : change1h < -0.8 && price < (ema21 || price) ? "Bearish" : "Range / Mixed";
       const sevenDayRange = closes1h.slice(-168);
       const low7 = sevenDayRange.length ? Math.min(...sevenDayRange) : price;
       const high7 = sevenDayRange.length ? Math.max(...sevenDayRange) : price;
       const rangePosition = high7 > low7 ? (price - low7) / (high7 - low7) : 0.5;
-      const cycleScore = Math.round(Math.max(0, Math.min(100,
-        25 + (change7d + 10) * 2 + (rangePosition * 35) + (rsi ?? 50) * 0.2
-      )));
+      const cycleScore = Math.round(Math.max(0, Math.min(100, 25 + (change7d + 10) * 2 + (rangePosition * 35) + (rsi ?? 50) * 0.2)));
       const cycleStage = cycleScore < 25 ? "Accumulation" : cycleScore < 45 ? "Early Markup" : cycleScore < 70 ? "Markup" : cycleScore < 85 ? "Distribution Risk" : "Markdown";
 
-      const notes = [
-        `Price is ${marketCondition.toLowerCase()} on the current structure.`,
-        `15m ${formatPct(change15m)} · 1h ${formatPct(change1h)} · 7d ${formatPct(change7d)}.`,
-        `Support $${formatPrice(support)} · Resistance $${formatPrice(resistance)}.`,
-        `Cycle is a technical proxy${mvrv === null ? " because on-chain data is unavailable" : " using current market/on-chain context"}.`,
-      ];
       setSourceNote(`${mvrv === null ? "MVRV/NUPL unavailable" : "MVRV/NUPL loaded"} · ${etfFlow === null ? "ETF flow unavailable" : "ETF flow loaded"} · refreshed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       setData({
         price, change24h: btcMarket.change24h, high24h: btcMarket.high24h, low24h: btcMarket.low24h, volume24h: btcMarket.quoteVolume24h,
@@ -2136,80 +2113,105 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
   }, []);
 
   const d = data;
+  const cycle10 = d ? d.cycleScore / 10 : 0;
+  const gaugeDeg = -90 + (cycle10 / 10) * 180;
+  const structureText = d ? (d.price > d.resistance * 0.995 ? "Testing Resistance" : d.price < d.support * 1.01 ? "Holding Support" : "Sideways / Cautious") : "Loading";
+  const cautionTone = d && d.marketCondition === "Bullish" ? "green" : d && d.marketCondition === "Bearish" ? "red" : "yellow";
+  const marketRead = d
+    ? `${d.marketCondition.toUpperCase()}: BTC is trading around $${formatCompactUsd(d.price).replace("$", "")}, with the current structure ${structureText.toLowerCase()}. ${d.price < d.resistance ? `Resistance sits near $${formatPrice(d.resistance)}.` : "Price is pressing above the recent resistance zone."}`
+    : "Loading the latest verified BTC market structure…";
+
+  const signalRows = d ? [
+    ["Price Structure", "Trend direction / key levels", `${structureText} · ${formatPct(d.change1h)}`, d.marketHealth >= 65 ? "Yellow" : "Red"],
+    ["ETF Flows", "Institutional demand", d.etfFlow === null ? "N/A" : `${d.etfFlow >= 0 ? "+" : ""}${d.etfFlow.toFixed(1)}M`, d.etfFlow === null ? "N/A" : d.etfFlow >= 0 ? "Green" : "Red"],
+    ["Funding Rates", "Long/short sentiment", d.fundingRate === null ? "N/A" : `${(d.fundingRate * 100).toFixed(4)}%`, d.fundingRate === null ? "N/A" : Math.abs(d.fundingRate) < 0.0002 ? "Yellow" : d.fundingRate > 0 ? "Green" : "Red"],
+    ["Open Interest", "Leverage / positioning", d.openInterestUsd === null ? "N/A" : formatCompactUsd(d.openInterestUsd), d.openInterestUsd === null ? "N/A" : "Yellow"],
+    ["MVRV / NUPL", "Cycle / top risk", d.mvrv === null || d.nupl === null ? "N/A" : `${d.mvrv.toFixed(2)} / ${d.nupl.toFixed(3)}`, d.mvrv === null ? "N/A" : d.mvrv > 3 ? "Red" : "Yellow"],
+    ["Liquidation Risk", "Forced longs / shorts", `${formatCompactUsd(d.longLiquidationUsd || 0)} / ${formatCompactUsd(d.shortLiquidationUsd || 0)}`, "Yellow"],
+    ["Volatility", "Short-term price swings", d.atrPercent === null ? "N/A" : `${d.atrPercent.toFixed(2)}% ATR`, d.atrPercent === null ? "N/A" : d.atrPercent > 4 ? "Red" : "Yellow"],
+  ] : [];
+
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <p className="eyebrow">BTC INTELLIGENCE CENTER</p>
-          <h1>BTC Report</h1>
-          <p className="muted">Live structure, derivatives, on-chain context and cycle proxy.</p>
+    <div className="btc-report-v2">
+      <style>{`
+        .btc-report-v2{--btc-bg:#02070b;--btc-panel:rgba(6,17,25,.82);--btc-border:rgba(53,221,206,.28);--btc-green:#12e5a6;--btc-red:#ff4b64;--btc-yellow:#ffd22e;--btc-blue:#48b9ff;--btc-muted:#8ea4b7;color:#eff7fb;padding:4px 0 34px}
+        .btc-report-v2 *{box-sizing:border-box}.btc-r-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;padding:12px 0 16px}.btc-r-brand{display:flex;gap:16px;align-items:center}.btc-logo{width:72px;height:72px;border-radius:22px;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,#ffb52e,#f58c06 52%,#c96200);color:#fff;font-size:43px;font-weight:900;box-shadow:0 0 34px rgba(244,141,23,.18);border:1px solid rgba(255,255,255,.14)}.btc-r-kicker{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#7d94a8;font-weight:800}.btc-r-title{font-size:34px;line-height:1;font-weight:900;margin:2px 0 6px;letter-spacing:-.04em}.btc-r-price{font-size:36px;font-weight:900;letter-spacing:-.03em}.btc-r-price-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.btc-badge{padding:7px 11px;border-radius:9px;border:1px solid rgba(255,77,100,.38);background:rgba(255,77,100,.08);color:var(--btc-red);font-weight:800;font-size:12px}.btc-range{font-size:12px;color:#a1b3c1}.btc-r-actions{display:flex;gap:8px;align-items:center}.btc-mini-btn{border:1px solid rgba(117,168,201,.18);background:rgba(8,20,29,.82);color:#dceaf2;padding:9px 12px;border-radius:10px;display:flex;align-items:center;gap:7px;cursor:pointer}.btc-mini-btn:hover{border-color:rgba(72,185,255,.45);background:rgba(72,185,255,.08)}.btc-top-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.btc-top-card{padding:12px 14px;border:1px solid rgba(83,157,194,.22);border-radius:12px;background:linear-gradient(180deg,rgba(9,23,33,.78),rgba(5,14,21,.94));min-height:76px}.btc-top-card .k{font-size:10px;color:#9bb1bf}.btc-top-card .v{font-size:19px;font-weight:800;margin-top:4px}.btc-top-card .s{font-size:11px;margin-top:3px}.btc-green{color:var(--btc-green)}.btc-red{color:var(--btc-red)}.btc-yellow{color:var(--btc-yellow)}.btc-muted{color:var(--btc-muted)}
+        .btc-main-grid{display:grid;grid-template-columns:1.2fr .95fr .82fr;gap:9px;margin-top:10px}.btc-panel{border:1px solid var(--btc-border);border-radius:12px;background:linear-gradient(180deg,rgba(7,21,31,.78),rgba(3,10,16,.96));overflow:hidden;box-shadow:inset 0 0 24px rgba(20,184,170,.025)}.btc-panel-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:12px 14px 8px}.btc-section-title{display:flex;align-items:center;gap:8px;font-weight:900;font-size:14px;letter-spacing:.01em}.btc-section-title .accent{color:var(--btc-green)}.btc-sub{font-size:10px;color:#7891a5}.btc-tf{display:flex;gap:5px}.btc-tf button{padding:6px 9px;border:1px solid rgba(94,157,210,.14);border-radius:7px;background:rgba(6,18,27,.78);color:#92a8b8;cursor:pointer;font-size:10px}.btc-tf button.active{color:#fff;border-color:rgba(72,185,255,.6);background:rgba(72,185,255,.14)}.btc-chart{height:275px;padding:0 10px 10px}.btc-chart-surface{height:100%;border-radius:8px;background:linear-gradient(180deg,rgba(7,19,28,.96),rgba(4,13,19,.95));overflow:hidden;border:1px solid rgba(82,140,176,.1)}.btc-chart-footer{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 10px 10px}.btc-foot{padding:8px 10px;border-radius:8px;background:rgba(10,27,38,.62);border:1px solid rgba(90,148,181,.12)}.btc-foot .k{font-size:9px;color:#7790a3}.btc-foot .v{font-weight:900;font-size:16px;margin-top:2px}
+        .btc-read{padding:10px 14px 15px}.btc-read-hero{padding:13px;border-radius:10px;border:1px solid rgba(255,221,57,.2);background:linear-gradient(145deg,rgba(81,63,5,.18),rgba(4,14,19,.38))}.btc-read-state{font-size:18px;font-weight:900;letter-spacing:.02em;line-height:1.05}.btc-read-state span{display:block}.btc-read-copy{font-size:11px;line-height:1.55;color:#9fb2bf;margin-top:9px}.btc-level-strip{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.btc-level{padding:9px;border-radius:8px;border:1px solid rgba(94,157,210,.14);background:rgba(6,18,27,.58)}.btc-level .k{font-size:9px;color:#7b93a7}.btc-level .v{font-weight:900;font-size:13px;margin-top:3px}.btc-structure{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.btc-structure .box{padding:9px;border-radius:8px;background:rgba(7,20,29,.6);border:1px solid rgba(86,157,192,.12)}.btc-structure b{display:block;margin-top:3px;font-size:13px}
+        .btc-gauge{padding:14px}.btc-gauge-wrap{position:relative;height:172px;display:grid;place-items:center}.btc-gauge-ring{width:150px;height:150px;border-radius:50%;background:conic-gradient(from 270deg,#12dca6 0 25%,#ffd52e 25% 50%,#ff8d22 50% 75%,#ff475d 75% 100%);mask:radial-gradient(circle 50px,transparent 98%,#000 101%);-webkit-mask:radial-gradient(circle 50px,transparent 98%,#000 101%)}.btc-gauge-needle{position:absolute;bottom:50%;left:50%;width:3px;height:60px;background:#fff;border-radius:2px;transform-origin:50% 100%;box-shadow:0 0 12px rgba(255,255,255,.2)}.btc-gauge-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-36%);text-align:center}.btc-gauge-center .n{font-size:26px;font-weight:900}.btc-gauge-center .s{font-size:10px;color:#96a9b6}.btc-stage{padding:10px;border:1px solid rgba(18,229,166,.25);border-radius:9px;background:rgba(18,229,166,.04);font-size:10px;color:#9fb2bf}.btc-stage b{display:block;font-size:14px;color:#ffd33a;margin-top:3px}.btc-cycle-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:9px;font-size:8px;color:#8499aa}.btc-cycle-legend span{padding:5px 4px;border-radius:6px;background:rgba(8,21,31,.6);text-align:center}
+        .btc-signal-panel{margin-top:9px}.btc-table-wrap{overflow:auto}.btc-signal-table{width:100%;border-collapse:collapse;font-size:10px}.btc-signal-table th,.btc-signal-table td{padding:8px 9px;border-top:1px solid rgba(89,146,177,.1);text-align:left;white-space:nowrap}.btc-signal-table th{font-size:9px;color:#7791a4;text-transform:uppercase;letter-spacing:.06em}.btc-status-dot{display:inline-flex;align-items:center;gap:6px}.btc-status-dot i{width:8px;height:8px;border-radius:50%;display:inline-block}.dot-green{background:var(--btc-green)}.dot-yellow{background:var(--btc-yellow)}.dot-red{background:var(--btc-red)}.dot-na{background:#687885}
+        .btc-bottom-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:9px;margin-top:9px}.btc-metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;padding:10px 12px 12px}.btc-metric{padding:10px;border-radius:8px;background:rgba(7,21,31,.58);border:1px solid rgba(84,149,183,.1)}.btc-metric .k{font-size:9px;color:#7d95a6}.btc-metric .v{font-size:16px;font-weight:900;margin-top:3px}.btc-mini-bars{display:flex;align-items:flex-end;gap:4px;height:36px;margin-top:5px}.btc-mini-bars i{display:block;width:7px;border-radius:2px 2px 0 0;background:linear-gradient(180deg,#28c7ff,#126ea8);opacity:.86}.btc-mini-bars.green i{background:linear-gradient(180deg,#14e4a6,#14795e)}.btc-mini-bars.yellow i{background:linear-gradient(180deg,#ffdd2f,#9c7e12)}
+        .btc-cycle-map{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:11px}.btc-cycle-node{padding:11px 6px;border-radius:10px;text-align:center;border:1px solid rgba(89,150,184,.12);background:rgba(7,20,29,.6)}.btc-cycle-node .icon{font-size:20px}.btc-cycle-node .lbl{font-size:9px;color:#91a6b5;margin-top:5px}.btc-cycle-node.active{border-color:rgba(255,210,47,.45);background:rgba(255,210,47,.06)}.btc-takeaways,.btc-alerts,.btc-statement,.btc-watch{padding:10px 12px}.btc-list{display:grid;gap:7px;margin:7px 0 0;padding:0;list-style:none}.btc-list li{font-size:10px;color:#9eb0bd;display:flex;gap:8px;line-height:1.45}.btc-list b{color:#f2f7fa}.btc-rule{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-top:1px solid rgba(90,144,173,.1);font-size:10px;color:#a2b4bf}.btc-rule:first-child{border-top:0}.btc-rule-dot{width:9px;height:9px;border-radius:50%;margin-top:3px;flex:none}.btc-rule.green .btc-rule-dot{background:var(--btc-green)}.btc-rule.yellow .btc-rule-dot{background:var(--btc-yellow)}.btc-rule.red .btc-rule-dot{background:var(--btc-red)}.btc-statement-text{font-size:11px;line-height:1.6;color:#a1b3bf}.btc-watch-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid rgba(90,144,173,.1);font-size:10px}.btc-watch-row:first-child{border-top:0}.btc-watch-row b{font-size:11px}
+        @media(max-width:1100px){.btc-main-grid{grid-template-columns:1fr}.btc-top-stats{grid-template-columns:repeat(2,1fr)}.btc-bottom-grid{grid-template-columns:1fr}}@media(max-width:760px){.btc-r-head{flex-direction:column}.btc-top-stats{grid-template-columns:1fr 1fr}.btc-chart{height:230px}.btc-metric-grid{grid-template-columns:1fr 1fr}.btc-cycle-map{grid-template-columns:1fr 1fr}.btc-price{font-size:27px}.btc-r-title{font-size:26px}}
+      `}</style>
+
+      <div className="btc-r-head">
+        <div className="btc-r-brand">
+          <div className="btc-logo">₿</div>
+          <div>
+            <div className="btc-r-kicker">Bitcoin market intelligence</div>
+            <div className="btc-r-price-row"><div className="btc-r-title">BITCOIN</div><span className="btc-badge">{d ? `${d.change24h >= 0 ? "▲" : "▼"} ${formatPct(d.change24h)} (24H)` : "Loading"}</span></div>
+            <div className="btc-r-price">{d ? `$${formatPrice(d.price)}` : "—"}</div>
+            <div className="btc-range">24h Range: {d ? `$${formatPrice(d.low24h)} – $${formatPrice(d.high24h)}` : "—"}</div>
+          </div>
         </div>
-        <div className="actions">
-          <button className="glass-btn" onClick={() => onCoinClick("BTCUSDT")} type="button">Open chart <ChevronRight size={14} /></button>
-          <button className="glass-btn" onClick={() => load(true)} disabled={refreshing} type="button"><RefreshCw size={14} /> {refreshing ? "Refreshing" : "Refresh"}</button>
+        <div className="btc-r-actions">
+          <button className="btc-mini-btn" type="button" onClick={() => onCoinClick("BTCUSDT")}><ChevronRight size={14} /> Chart</button>
+          <button className="btc-mini-btn" type="button" onClick={() => load(true)} disabled={refreshing}><RefreshCw size={14} /> {refreshing ? "Refreshing" : "Refresh"}</button>
         </div>
       </div>
 
-      {error && <div className="glass-card" style={{ padding: "12px 14px", marginBottom: "14px", color: "#ff7180" }}>{error}</div>}
-      {sourceNote && <p className="muted" style={{ margin: "0 0 12px", fontSize: "10px" }}>{sourceNote}</p>}
+      {error && <div className="btc-panel" style={{ padding: "10px 12px", color: "#ff7180", marginBottom: 9 }}>{error}</div>}
 
-      <div className="stats-grid">
-        <Card><span className="label">BTC PRICE</span><strong className="price">{loading || !d ? "—" : `$${formatPrice(d.price)}`}</strong><span className={d && d.change24h >= 0 ? "up" : "muted"}>{d ? formatPct(d.change24h) : "Loading..."}</span></Card>
-        <Card><span className="label">MARKET HEALTH</span><strong>{d ? `${d.marketHealth}/100` : "—"}</strong><span className={d && d.marketHealth >= 65 ? "up" : "muted"}>{d ? d.marketCondition : "Loading"}</span></Card>
-        <Card><span className="label">CYCLE SCORE</span><strong>{d ? d.cycleScore : "—"}</strong><span className="muted">{d ? d.cycleStage : "Loading"}</span></Card>
-        <Card><span className="label">FUNDING</span><strong>{d?.fundingRate === null || d?.fundingRate === undefined ? "N/A" : `${(d.fundingRate * 100).toFixed(4)}%`}</strong><span className="muted">BTC perpetual</span></Card>
+      <div className="btc-top-stats">
+        <div className="btc-top-card"><div className="k">MARKET CAP</div><div className="v">N/A</div><div className="s btc-muted">Verified supply data unavailable</div></div>
+        <div className="btc-top-card"><div className="k">24h VOLUME</div><div className="v">{d ? formatCompactUsd(d.volume24h) : "—"}</div><div className={d && d.volume24h > 0 ? "s btc-green" : "s btc-muted"}>Spot market volume</div></div>
+        <div className="btc-top-card"><div className="k">DOMINANCE</div><div className="v">N/A</div><div className="s btc-muted">Verified global dominance unavailable</div></div>
+        <div className="btc-top-card"><div className="k">OPEN INTEREST</div><div className="v">{d?.openInterestUsd == null ? "N/A" : formatCompactUsd(d.openInterestUsd)}</div><div className={d?.openInterestUsd != null ? "s btc-yellow" : "s btc-muted"}>BTC futures</div></div>
       </div>
 
-      <div className="btc-layout" style={{ marginTop: "14px" }}>
-        <Card className="chart-card">
-          <div className="card-head"><div><span className="label">PRICE STRUCTURE</span><h2>BTC / USDT</h2></div><span className="muted">15m + 1h context</span></div>
-          <CoinChart symbol="BTCUSDT" />
-          <div className="report-grid" style={{ marginTop: "14px" }}>
-            <div><span className="label">15M</span><h2>{d ? formatPct(d.change15m) : "—"}</h2></div>
-            <div><span className="label">1H</span><h2>{d ? formatPct(d.change1h) : "—"}</h2></div>
-            <div><span className="label">7D</span><h2>{d ? formatPct(d.change7d) : "—"}</h2></div>
+      <div className="btc-main-grid">
+        <div className="btc-panel">
+          <div className="btc-panel-head"><div><div className="btc-section-title"><span className="accent">↗</span> PRICE ACTION <span className="btc-sub">(Live)</span></div><div className="btc-sub">BTC / USDT</div></div><div className="btc-tf">{["1m","5m","15m","1h","4h","1d"].map(tf=><button key={tf} type="button" className={chartTf===tf?"active":""} onClick={()=>setChartTf(tf)}>{tf}</button>)}</div></div>
+          <div className="btc-chart"><div className="btc-chart-surface"><CoinChart symbol="BTCUSDT" /></div></div>
+          <div className="btc-chart-footer"><div className="btc-foot"><div className="k">15M</div><div className={(d?.change15m ?? 0)>=0?"v btc-green":"v btc-red"}>{d ? formatPct(d.change15m) : "—"}</div></div><div className="btc-foot"><div className="k">1H</div><div className={(d?.change1h ?? 0)>=0?"v btc-green":"v btc-red"}>{d ? formatPct(d.change1h) : "—"}</div></div><div className="btc-foot"><div className="k">7D</div><div className={(d?.change7d ?? 0)>=0?"v btc-green":"v btc-red"}>{d ? formatPct(d.change7d) : "—"}</div></div></div>
+        </div>
+
+        <div className="btc-panel">
+          <div className="btc-panel-head"><div className="btc-section-title"><span className="accent btc-yellow">⚠</span> CURRENT MARKET READ</div><div className="btc-sub">Derived from latest verified data</div></div>
+          <div className="btc-read">
+            <div className="btc-read-hero"><div className={`btc-read-state ${cautionTone}`}>{d ? d.marketCondition.toUpperCase() : "LOADING"}<span>{structureText.toUpperCase()}</span></div><div className="btc-read-copy">{marketRead}</div></div>
+            <div className="btc-level-strip"><div className="btc-level"><div className="k">KEY SUPPORT</div><div className="v btc-green">{d ? `$${formatPrice(d.support)}` : "—"}</div></div><div className="btc-level"><div className="k">KEY RESISTANCE</div><div className="v btc-red">{d ? `$${formatPrice(d.resistance)}` : "—"}</div></div></div>
+            <div className="btc-structure"><div className="box"><span className="btc-muted">Structure</span><b className={cautionTone === "green" ? "btc-green" : cautionTone === "red" ? "btc-red" : "btc-yellow"}>{structureText}</b></div><div className="box"><span className="btc-muted">Simple Read</span><b>{d ? (d.marketCondition === "Bullish" ? "Momentum favorable above support." : d.marketCondition === "Bearish" ? "Risk rises below support." : "Neutral until resistance breaks.") : "Loading…"}</b></div></div>
           </div>
-        </Card>
+        </div>
 
-        <Card>
-          <span className="label">KEY LEVELS</span>
-          <div className="level-list">
-            <div><span>Support</span><b className="mono">{d ? `$${formatPrice(d.support)}` : "—"}</b></div>
-            <div><span>Resistance</span><b className="mono">{d ? `$${formatPrice(d.resistance)}` : "—"}</b></div>
-            <div><span>EMA 21</span><b className="mono">{d?.ema21 === null ? "N/A" : d ? `$${formatPrice(d.ema21)}` : "—"}</b></div>
-            <div><span>EMA 50</span><b className="mono">{d?.ema50 === null ? "N/A" : d ? `$${formatPrice(d.ema50)}` : "—"}</b></div>
-            <div><span>RSI 14</span><b className="mono">{fmtMetric(d?.rsi ?? null, 1)}</b></div>
-            <div><span>ATR</span><b className="mono">{fmtMetric(d?.atrPercent ?? null, 2, "%")}</b></div>
-          </div>
-        </Card>
+        <div className="btc-panel">
+          <div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◉</span> MARKET CYCLE SCORE <span className="btc-sub">(Analytical)</span></div><div className="btc-r-price">{d ? `${d.cycleScore}/100` : "—"}</div></div>
+          <div className="btc-gauge"><div className="btc-gauge-wrap"><div className="btc-gauge-ring"/><div className="btc-gauge-needle" style={{transform:`translateX(-50%) rotate(${gaugeDeg}deg)`}}/><div className="btc-gauge-center"><div className="n">{d ? Math.round(cycle10) : "—"}</div><div className="s">/ 10</div></div></div><div className="btc-stage">Cycle Stage <b>{d ? d.cycleStage : "Loading"}</b></div><div className="btc-cycle-legend"><span>Accumulation</span><span>Markup</span><span>Distribution</span><span>Markdown</span></div></div>
+        </div>
       </div>
 
-      <div className="stats-grid" style={{ marginTop: "14px" }}>
-        <Card><span className="label">OPEN INTEREST</span><strong>{d?.openInterestUsd === null ? "N/A" : d ? formatCompactUsd(d.openInterestUsd) : "—"}</strong><span className="muted">Current BTC futures OI</span></Card>
-        <Card><span className="label">LONG LIQUIDATIONS</span><strong>{d?.longLiquidationUsd === null ? "N/A" : d ? formatCompactUsd(d.longLiquidationUsd) : "—"}</strong><span className="muted">Recent force orders</span></Card>
-        <Card><span className="label">SHORT LIQUIDATIONS</span><strong>{d?.shortLiquidationUsd === null ? "N/A" : d ? formatCompactUsd(d.shortLiquidationUsd) : "—"}</strong><span className="muted">Recent force orders</span></Card>
-        <Card><span className="label">ETF NET FLOW</span><strong>{d?.etfFlow === null ? "N/A" : d ? `${d.etfFlow >= 0 ? "+" : ""}$${d.etfFlow.toFixed(1)}M` : "—"}</strong><span className="muted">Latest published day</span></Card>
+      <div className="btc-panel btc-signal-panel">
+        <div className="btc-panel-head"><div className="btc-section-title"><span className="accent">▤</span> SIGNAL TABLE <span className="btc-sub">(Based on latest verified data)</span></div></div>
+        <div className="btc-table-wrap"><table className="btc-signal-table"><thead><tr><th>#</th><th>Signal</th><th>What to Watch</th><th>Current Read (Latest)</th><th>Status</th></tr></thead><tbody>{signalRows.map((row,i)=><tr key={row[0]}><td>{i+1}</td><td><b>{row[0]}</b></td><td className="btc-muted">{row[1]}</td><td>{row[2]}</td><td><span className="btc-status-dot"><i className={row[3]==="Green"?"dot-green":row[3]==="Yellow"?"dot-yellow":row[3]==="Red"?"dot-red":"dot-na"}/>{row[3]}</span></td></tr>)}</tbody></table></div>
       </div>
 
-      <div className="two-col" style={{ marginTop: "14px" }}>
-        <Card>
-          <div className="card-head"><div><span className="label">ON-CHAIN</span><h2>MVRV / NUPL</h2></div><span className="muted">Live where public data is available</span></div>
-          <div className="report-grid">
-            <div><span className="label">MVRV</span><h2>{fmtMetric(d?.mvrv ?? null, 2)}</h2></div>
-            <div><span className="label">NUPL</span><h2>{fmtMetric(d?.nupl ?? null, 3)}</h2></div>
-            <div><span className="label">24H RANGE</span><h2>{d ? `$${formatPrice(d.low24h)} — $${formatPrice(d.high24h)}` : "—"}</h2></div>
-          </div>
-        </Card>
-        <Card>
-          <span className="label">KEY TAKEAWAYS</span>
-          {d ? <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
-            <p className="muted" style={{ margin: 0 }}>• Market condition: <b>{d.marketCondition}</b> with health score <b>{d.marketHealth}/100</b>.</p>
-            <p className="muted" style={{ margin: 0 }}>• 15m {formatPct(d.change15m)} · 1h {formatPct(d.change1h)} · 7d {formatPct(d.change7d)}.</p>
-            <p className="muted" style={{ margin: 0 }}>• Key range: support <b>${formatPrice(d.support)}</b> / resistance <b>${formatPrice(d.resistance)}</b>.</p>
-            <p className="muted" style={{ margin: 0 }}>• Cycle stage: <b>{d.cycleStage}</b> (technical proxy, not a guaranteed market-cycle label).</p>
-          </div> : <p className="muted">Loading report…</p>}
-        </Card>
+      <div className="btc-bottom-grid">
+        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">▥</span> ETF / DERIVATIVES SNAPSHOT</div></div><div className="btc-metric-grid"><div className="btc-metric"><div className="k">US SPOT BTC ETF FLOWS</div><div className={d?.etfFlow == null ? "v btc-muted" : d.etfFlow >= 0 ? "v btc-green" : "v btc-red"}>{d?.etfFlow == null ? "N/A" : `${d.etfFlow >= 0?"+":""}$${d.etfFlow.toFixed(1)}M`}</div></div><div className="btc-metric"><div className="k">BTC SPOT VOLUME (24h)</div><div className="v btc-blue">{d ? formatCompactUsd(d.volume24h) : "—"}</div><div className="btc-mini-bars blue">{[25,38,27,44,34,51,48,64].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div></div><div className="btc-metric"><div className="k">BTC FUTURES OPEN INTEREST</div><div className="v btc-yellow">{d?.openInterestUsd == null ? "N/A" : formatCompactUsd(d.openInterestUsd)}</div><div className="btc-mini-bars yellow">{[28,35,30,41,38,52,49,67].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div></div><div className="btc-metric"><div className="k">FUNDING RATE</div><div className={d?.fundingRate == null ? "v btc-muted" : d.fundingRate >= 0 ? "v btc-green" : "v btc-red"}>{d?.fundingRate == null ? "N/A" : `${(d.fundingRate*100).toFixed(4)}%`}</div><div className="btc-muted" style={{fontSize:9,marginTop:4}}>BTC perpetual</div></div></div></div>
+        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◫</span> KEY TAKEAWAYS</div></div><div className="btc-takeaways"><ul className="btc-list"><li><span className="btc-green">●</span><span>BTC is {d ? d.marketCondition.toLowerCase() : "loading"} with price near <b>{d ? `$${formatPrice(d.price)}` : "—"}</b>.</span></li><li><span className="btc-yellow">●</span><span>Price is {d ? (d.price < d.resistance ? "below" : "above") : "near"} the current resistance zone.</span></li><li><span className="btc-yellow">●</span><span>Cycle stage is <b>{d?.cycleStage || "Loading"}</b> with a score of <b>{d ? d.cycleScore : "—"}/100</b>.</span></li><li><span className="btc-muted">●</span><span>Funding, MVRV/NUPL or ETF flow may be <b>N/A</b> when latest verified public data is unavailable.</span></li></ul></div></div>
       </div>
+
+      <div className="btc-bottom-grid">
+        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent btc-yellow">●</span> TOP ALERT RULES</div></div><div className="btc-alerts"><div className="btc-rule green"><span className="btc-rule-dot"/><span><b>GREEN (Healthy):</b> Price holds support and market health remains above 70.</span></div><div className="btc-rule yellow"><span className="btc-rule-dot"/><span><b>YELLOW (Caution):</b> Sideways structure, elevated leverage or resistance nearby.</span></div><div className="btc-rule red"><span className="btc-rule-dot"/><span><b>RED (Risk):</b> Price loses support or market health falls below 45.</span></div></div></div>
+        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">▤</span> MARKET CONDITION STATEMENT</div><div className="btc-sub">Last updated {d ? new Date(d.updatedAt).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"}</div></div><div className="btc-statement"><div className="btc-statement-text">{d ? `BTC remains in a ${d.marketCondition.toLowerCase()} state. Price is ${d.price < d.resistance ? "below" : "above"} the current resistance area, while the key support sits near $${formatPrice(d.support)}. ${d.fundingRate == null ? "Funding data is unavailable from the latest verified endpoint." : `Funding is ${(d.fundingRate*100).toFixed(4)}%, providing a live derivatives sentiment read.`}` : "Loading statement…"}</div></div></div>
+      </div>
+
+      <div className="btc-panel" style={{marginTop:9}}><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◌</span> CYCLE MAP <span className="btc-sub">(Analytical)</span></div></div><div className="btc-cycle-map">{["Accumulation","Markup","Distribution","Markdown"].map((name,idx)=>{const active = d ? (d.cycleStage.includes("Accumulation")?idx===0:d.cycleStage.includes("Markup")?idx===1:d.cycleStage.includes("Distribution")?idx===2:idx===3) : false; return <div key={name} className={`btc-cycle-node ${active?"active":""}`}><div className="icon">{["◉","↗","◌","↘"][idx]}</div><div className="lbl">{name}</div></div>})}</div></div>
+
+      <div className="btc-panel" style={{marginTop:9}}><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◎</span> KEY LEVELS TO WATCH <span className="btc-sub">(Analysis)</span></div></div><div className="btc-watch"><div className="btc-watch-row"><span>Resistance 2</span><b className="btc-red">{d ? `$${formatPrice(d.resistance * 1.03)}` : "—"}</b></div><div className="btc-watch-row"><span>Resistance 1</span><b className="btc-red">{d ? `$${formatPrice(d.resistance)}` : "—"}</b></div><div className="btc-watch-row"><span>Support 1</span><b className="btc-green">{d ? `$${formatPrice(d.support)}` : "—"}</b></div><div className="btc-watch-row"><span>Support 2</span><b className="btc-green">{d ? `$${formatPrice(d.support * 0.97)}` : "—"}</b></div><div className="btc-watch-row"><span>EMA 21 / 50</span><b>{d?.ema21 == null || d?.ema50 == null ? "N/A" : `$${formatPrice(d.ema21)} / $${formatPrice(d.ema50)}`}</b></div></div></div>
+
+      {sourceNote && <div className="btc-sub" style={{ marginTop: 7 }}>{sourceNote}</div>}
     </div>
   );
 }
