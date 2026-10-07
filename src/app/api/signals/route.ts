@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 300;
 
-const CURRENT_ENGINE_VERSION = "scalp-v11-trigger-history-preserve";
+const CURRENT_ENGINE_VERSION = "scalp-v12-volume-impulse-retest-force";
 const WINDOW_MS = 30 * 60 * 1000;
 
 const SPOT_BASES = [
@@ -751,57 +751,71 @@ function passesHardScalpFilter(args: {
   breakoutShort: boolean;
   supportDistance: number;
   resistanceDistance: number;
+  impulseLong: boolean;
+  impulseShort: boolean;
+  pullbackLong: boolean;
+  pullbackShort: boolean;
+  recentVolumeBurst: number;
 }) {
   const {
     direction, score, tools, atrPercent, spreadBps, change15m, change1h, volumeSpike,
     currentRangePercent, btcRegime, breakoutLong, breakoutShort, supportDistance, resistanceDistance,
+    impulseLong, impulseShort, pullbackLong, pullbackShort, recentVolumeBurst,
   } = args;
 
   if (direction === "NEUTRAL") return false;
-  if (score < 110) return false;
-
-  // Mandatory execution-quality gates for scalping.
+  if (score < 100) return false;
   if (tools.Liquidity?.score !== 10) return false;
   if (tools.ATR?.score !== 10) return false;
-  if (tools["EMA Trend"]?.bias !== direction || tools["EMA Trend"]?.score !== 10) return false;
   if (tools.VWAP?.bias !== direction || tools.VWAP?.score !== 10) return false;
-  if (tools.RSI?.bias !== direction || tools.RSI?.score !== 10) return false;
-  if (tools.MACD?.bias !== direction || tools.MACD?.score !== 10) return false;
-  if (tools["Market Structure"]?.bias !== direction || tools["Market Structure"]?.score !== 10) return false;
-  if (tools["Trend Strength"]?.bias !== direction || tools["Trend Strength"]?.score !== 10) return false;
-  if (tools["Momentum Alignment"]?.bias !== direction || tools["Momentum Alignment"]?.score !== 10) return false;
-  if (tools["Market Regime"]?.bias !== direction || tools["Market Regime"]?.score !== 10) return false;
-  if (btcRegime !== "Neutral" && (tools["BTC Confirmation"]?.bias !== direction || tools["BTC Confirmation"]?.score !== 10)) return false;
 
-  const { long, short, longVotes, shortVotes } = directionalTotals(tools);
-  const directionalScore = direction === "LONG" ? long : short;
-  const opposingScore = direction === "LONG" ? short : long;
-  const directionalVotes = direction === "LONG" ? longVotes : shortVotes;
-  const opposingVotes = direction === "LONG" ? shortVotes : longVotes;
+  const trendCore = (tools["EMA Trend"]?.bias === direction && tools["EMA Trend"]?.score === 10)
+    || (tools["Market Structure"]?.bias === direction && tools["Market Structure"]?.score === 10);
+  if (!trendCore) return false;
 
-  if (directionalScore < 80 || directionalVotes < 8) return false;
-  if (opposingScore > 10 || opposingVotes > 1) return false;
+  if (tools["Trend Strength"]?.score !== 10) return false;
 
-  if (btcRegime === "Bullish" && direction !== "LONG") return false;
-  if (btcRegime === "Bearish" && direction !== "SHORT") return false;
+  const momentumCore = (tools.RSI?.bias === direction && tools.RSI?.score === 10)
+    || (tools.MACD?.bias === direction && tools.MACD?.score === 10)
+    || (tools["Momentum Alignment"]?.bias === direction && tools["Momentum Alignment"]?.score === 10);
+  if (!momentumCore) return false;
 
-  // Do not chase a large candle / already-extended move.
-  if (currentRangePercent > 2.25) return false;
-  if (direction === "LONG" && (change15m <= 0 || change15m > 1.8 || change1h <= 0 || change1h > 5.5)) return false;
-  if (direction === "SHORT" && (change15m >= 0 || change15m < -1.8 || change1h >= 0 || change1h < -5.5)) return false;
+  if (btcRegime === "Bullish" && direction === "SHORT") return false;
+  if (btcRegime === "Bearish" && direction === "LONG") return false;
+  if (direction === "LONG" && !(impulseLong || breakoutLong || pullbackLong)) return false;
+  if (direction === "SHORT" && !(impulseShort || breakoutShort || pullbackShort)) return false;
 
-  if (atrPercent === null || atrPercent < 0.25 || atrPercent > 2.5) return false;
-  if (spreadBps === null || spreadBps > 10) return false;
-  if (volumeSpike < 1.20) return false;
+  // The strategy is designed for impulse -> controlled pullback/retest -> continuation,
+  // so a negative 15m candle is allowed on a LONG retest and vice versa.
+  if (direction === "LONG") {
+    const healthy = (change1h >= 0.25 && change15m >= -1.2) || pullbackLong || breakoutLong;
+    if (!healthy) return false;
+  } else {
+    const healthy = (change1h <= -0.25 && change15m <= 1.2) || pullbackShort || breakoutShort;
+    if (!healthy) return false;
+  }
+
+  if (currentRangePercent > 4.5) return false;
+  if (atrPercent === null || atrPercent < 0.20 || atrPercent > 4.5) return false;
+  if (spreadBps === null || spreadBps > 15) return false;
+  if (Math.max(volumeSpike, recentVolumeBurst) < 1.20) return false;
 
   const srFavorable = direction === "LONG"
-    ? (supportDistance <= 1.5 && supportDistance < resistanceDistance)
-    : (resistanceDistance <= 1.5 && resistanceDistance < supportDistance);
+    ? (supportDistance <= 3.5 && supportDistance < resistanceDistance)
+    : (resistanceDistance <= 3.5 && resistanceDistance < supportDistance);
+  const retestLocation = direction === "LONG" ? pullbackLong : pullbackShort;
   const breakoutConfirmed = direction === "LONG" ? breakoutLong : breakoutShort;
-  const volumeConfirmed = tools["Volume Pressure"]?.bias === direction || tools["Volume Spike"]?.bias === direction;
+  const volumeConfirmed = tools["Volume Pressure"]?.bias === direction
+    || tools["Volume Spike"]?.bias === direction
+    || recentVolumeBurst >= 1.5;
 
-  if (!srFavorable && !breakoutConfirmed) return false;
+  if (!srFavorable && !breakoutConfirmed && !retestLocation) return false;
   if (!volumeConfirmed) return false;
+
+  const { longVotes, shortVotes } = directionalTotals(tools);
+  const directionalVotes = direction === "LONG" ? longVotes : shortVotes;
+  const opposingVotes = direction === "LONG" ? shortVotes : longVotes;
+  if (directionalVotes < 6 || opposingVotes > 2) return false;
 
   return true;
 }
@@ -950,15 +964,53 @@ function shortTermStructure(candles: Candle[]) {
   };
 }
 
-function volumePressureTool(candle: Candle, averageQuoteVolume: number): ToolResult {
+function volumePressureTool(candle: Candle, averageQuoteVolume: number, longEvent: boolean, shortEvent: boolean): ToolResult {
   const range = Math.max(candle.high - candle.low, candle.close * 0.000001);
   const body = candle.close - candle.open;
   const bodyRatio = Math.abs(body) / range;
-  const volumeConfirmed = candle.quoteVolume >= averageQuoteVolume * 1.1;
-  if (!volumeConfirmed || bodyRatio < 0.45) return tool(0, "No strong volume pressure", "NEUTRAL");
-  if (body > 0) return tool(10, "Strong buying pressure", "LONG");
-  if (body < 0) return tool(10, "Strong selling pressure", "SHORT");
-  return tool(0, "Balanced pressure", "NEUTRAL");
+  const volumeConfirmed = candle.quoteVolume >= averageQuoteVolume * 1.05;
+  if (longEvent && volumeConfirmed && (body > 0 || bodyRatio < 0.55)) {
+    return tool(10, "Recent buying impulse / participation", "LONG");
+  }
+  if (shortEvent && volumeConfirmed && (body < 0 || bodyRatio < 0.55)) {
+    return tool(10, "Recent selling impulse / participation", "SHORT");
+  }
+  if (body > 0 && volumeConfirmed && bodyRatio >= 0.35) return tool(10, "Buying pressure", "LONG");
+  if (body < 0 && volumeConfirmed && bodyRatio >= 0.35) return tool(10, "Selling pressure", "SHORT");
+  return tool(0, "No strong volume pressure", "NEUTRAL");
+}
+
+function recentImpulseInfo(candles: Candle[], averageQuoteVolume: number) {
+  const lookback = candles.slice(-6);
+  const base4 = candles[candles.length - 5]?.close ?? candles[candles.length - 1]?.close ?? 0;
+  const base6 = candles[candles.length - 7]?.close ?? base4;
+  const last = candles[candles.length - 1];
+  const recentHigh = lookback.length ? Math.max(...lookback.map((c) => c.high)) : last?.high ?? 0;
+  const recentLow = lookback.length ? Math.min(...lookback.map((c) => c.low)) : last?.low ?? 0;
+  const move4 = base4 > 0 && last ? ((last.close / base4) - 1) * 100 : 0;
+  const move6 = base6 > 0 && last ? ((last.close / base6) - 1) * 100 : 0;
+  const burst = averageQuoteVolume > 0 && lookback.length
+    ? Math.max(...lookback.map((c) => c.quoteVolume / averageQuoteVolume))
+    : 1;
+  const pullbackLong = last
+    ? recentHigh > 0 && ((recentHigh - last.close) / recentHigh) * 100 >= 0.25 && ((recentHigh - last.close) / recentHigh) * 100 <= 4.5
+    : false;
+  const pullbackShort = last
+    ? recentLow > 0 && ((last.close - recentLow) / recentLow) * 100 >= 0.25 && ((last.close - recentLow) / recentLow) * 100 <= 4.5
+    : false;
+  const impulseLong = move4 >= 0.8 || move6 >= 1.2 || (burst >= 1.5 && move6 > 0.5);
+  const impulseShort = move4 <= -0.8 || move6 <= -1.2 || (burst >= 1.5 && move6 < -0.5);
+  return {
+    impulseLong,
+    impulseShort,
+    pullbackLong,
+    pullbackShort,
+    burst,
+    recentHigh,
+    recentLow,
+    move4,
+    move6,
+  };
 }
 
 function emaSlope(values: number[], period: number): number {
@@ -1127,6 +1179,7 @@ export async function GET(request: Request) {
             ? previous20.reduce((sum, candle) => sum + candle.quoteVolume, 0) / previous20.length
             : current.quoteVolume;
           const volumeSpike = averageVolume > 0 ? current.quoteVolume / averageVolume : 1;
+          const impulse = recentImpulseInfo(c15, averageVolume);
 
           const ema9 = ema(closes15, 9);
           const ema21 = ema(closes15, 21);
@@ -1189,7 +1242,14 @@ export async function GET(request: Request) {
           const emaBull1h = c1h[c1h.length - 1].close > ema1h9 && ema1h9 > ema1h21 && ema1h21 > ema1h50 && ema21Slope1h > 0;
           const emaBear1h = c1h[c1h.length - 1].close < ema1h9 && ema1h9 < ema1h21 && ema1h21 < ema1h50 && ema21Slope1h < 0;
 
-          tools["Volume Spike"] = volumeTool(volumeSpike, change15m);
+          const longSetup = impulse.impulseLong || breakoutLong || impulse.pullbackLong;
+          const shortSetup = impulse.impulseShort || breakoutShort || impulse.pullbackShort;
+          tools["Volume Spike"] = binaryDirection(
+            impulse.impulseLong || (volumeSpike >= 1.35 && change15m > -0.25),
+            impulse.impulseShort || (volumeSpike >= 1.35 && change15m < 0.25),
+            `${Math.max(volumeSpike, impulse.burst).toFixed(1)}× bullish participation`,
+            `${Math.max(volumeSpike, impulse.burst).toFixed(1)}× bearish participation`,
+          );
           tools["EMA Trend"] = binaryDirection(
             emaBull15 && emaBull1h,
             emaBear15 && emaBear1h,
@@ -1202,14 +1262,14 @@ export async function GET(request: Request) {
             "Above 15m + 1h VWAP",
             "Below 15m + 1h VWAP",
           );
-          const rsiLong = rsiValue !== null && rsi1hValue !== null && rsiValue >= 52 && rsiValue <= 68 && rsi1hValue >= 50 && rsi1hValue <= 70 && rsi15Slope > 0 && rsi1hSlope >= -0.25;
-          const rsiShort = rsiValue !== null && rsi1hValue !== null && rsiValue >= 32 && rsiValue <= 48 && rsi1hValue >= 30 && rsi1hValue <= 50 && rsi15Slope < 0 && rsi1hSlope <= 0.25;
+          const rsiLong = rsiValue !== null && rsi1hValue !== null && rsiValue >= 45 && rsiValue <= 72 && rsi1hValue >= 48 && rsi1hValue <= 74 && (rsi15Slope > -2 || impulse.pullbackLong);
+          const rsiShort = rsiValue !== null && rsi1hValue !== null && rsiValue >= 28 && rsiValue <= 55 && rsi1hValue >= 26 && rsi1hValue <= 52 && (rsi15Slope < 2 || impulse.pullbackShort);
           tools.RSI = binaryDirection(rsiLong, rsiShort, `15m ${rsiValue?.toFixed(1)} + 1h ${rsi1hValue?.toFixed(1)} bullish`, `15m ${rsiValue?.toFixed(1)} + 1h ${rsi1hValue?.toFixed(1)} bearish`);
           tools.MACD = binaryDirection(
-            macdValue.histogram > 0 && macd1hValue.histogram > 0 && macdValue.line > macdValue.signal,
-            macdValue.histogram < 0 && macd1hValue.histogram < 0 && macdValue.line < macdValue.signal,
-            "15m + 1h MACD bullish",
-            "15m + 1h MACD bearish",
+            macd1hValue.histogram > 0 && (macdValue.histogram >= 0 || impulse.pullbackLong),
+            macd1hValue.histogram < 0 && (macdValue.histogram <= 0 || impulse.pullbackShort),
+            "1h MACD bullish with 15m continuation/retest",
+            "1h MACD bearish with 15m continuation/retest",
           );
           tools.Breakout = binaryDirection(
             breakoutLong,
@@ -1218,10 +1278,10 @@ export async function GET(request: Request) {
             "Confirmed structure breakdown",
           );
           tools["Market Structure"] = binaryDirection(
-            structure15.long && structure1h.long && current.close > ema21 && change15m > 0 && change1h > 0,
-            structure15.short && structure1h.short && current.close < ema21 && change15m < 0 && change1h < 0,
-            "15m + 1h higher-high / higher-low structure",
-            "15m + 1h lower-high / lower-low structure",
+            structure15.long && structure1h.long && current.close > ema21 && (change15m > 0 || impulse.pullbackLong) && (change1h > -0.25 || impulse.pullbackLong),
+            structure15.short && structure1h.short && current.close < ema21 && (change15m < 0 || impulse.pullbackShort) && (change1h < 0.25 || impulse.pullbackShort),
+            "15m + 1h structure bullish / pullback intact",
+            "15m + 1h structure bearish / pullback intact",
           );
           tools["BTC Confirmation"] = binaryDirection(
             btcBull && change1h > 0 && current.close > ema21,
@@ -1238,16 +1298,16 @@ export async function GET(request: Request) {
             `Major resistance ${distanceToResistance.toFixed(2)}% away`,
           );
           tools["Trend Strength"] = binaryDirection(
-            adxValue !== null && adx1hValue !== null && adxValue >= 22 && adx1hValue >= 22 && ema21Slope15 > 0,
-            adxValue !== null && adx1hValue !== null && adxValue >= 22 && adx1hValue >= 22 && ema21Slope15 < 0,
+            adxValue !== null && adx1hValue !== null && adxValue >= 18 && adx1hValue >= 18 && (ema21Slope15 > 0 || impulse.pullbackLong),
+            adxValue !== null && adx1hValue !== null && adxValue >= 18 && adx1hValue >= 18 && (ema21Slope15 < 0 || impulse.pullbackShort),
             `ADX ${adxValue?.toFixed(1)} / 1h ${adx1hValue?.toFixed(1)} bullish`,
             `ADX ${adxValue?.toFixed(1)} / 1h ${adx1hValue?.toFixed(1)} bearish`,
           );
           tools["Momentum Alignment"] = binaryDirection(
-            change15m > 0.15 && change1h > 0.3 && btcRegime !== "Bearish",
-            change15m < -0.15 && change1h < -0.3 && btcRegime !== "Bullish",
-            "15m + 1h momentum aligned",
-            "15m + 1h momentum aligned",
+            ((change15m > 0.10 && change1h > 0.25) || (impulse.pullbackLong && change1h > 0.25)) && btcRegime !== "Bearish",
+            ((change15m < -0.10 && change1h < -0.25) || (impulse.pullbackShort && change1h < -0.25)) && btcRegime !== "Bullish",
+            "15m + 1h momentum aligned / retest",
+            "15m + 1h momentum aligned / retest",
           );
           tools["Market Regime"] = binaryDirection(
             ema1h21 > ema1h50 && rsi1hValue !== null && rsi1hValue >= 50 && momentum1h > 0,
@@ -1255,7 +1315,7 @@ export async function GET(request: Request) {
             "Bull trend regime",
             "Bear trend regime",
           );
-          tools["Volume Pressure"] = volumePressureTool(current, averageVolume);
+          tools["Volume Pressure"] = volumePressureTool(current, averageVolume, impulse.impulseLong || impulse.pullbackLong, impulse.impulseShort || impulse.pullbackShort);
 
           const score = Object.values(tools).reduce((sum, currentTool) => sum + currentTool.score, 0);
           const direction = inferDirection(tools, score);
@@ -1332,6 +1392,11 @@ export async function GET(request: Request) {
         breakoutShort: row.tools.Breakout?.bias === "SHORT" && row.tools.Breakout?.score === 10,
         supportDistance: row.supportDistance,
         resistanceDistance: row.resistanceDistance,
+        impulseLong: Boolean(row.tools["Volume Spike"]?.bias === "LONG" || row.tools["Momentum Alignment"]?.bias === "LONG"),
+        impulseShort: Boolean(row.tools["Volume Spike"]?.bias === "SHORT" || row.tools["Momentum Alignment"]?.bias === "SHORT"),
+        pullbackLong: Boolean(row.change1h > 0.25 && row.change15m <= 0.35),
+        pullbackShort: Boolean(row.change1h < -0.25 && row.change15m >= -0.35),
+        recentVolumeBurst: row.volumeSpike,
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 12);
@@ -1356,6 +1421,12 @@ export async function GET(request: Request) {
       scanIntervalMinutes: 30 as const,
       rows: data,
     };
+
+    if (force && data.length === 0 && existingCurrent?.rows?.length) {
+      await migrateLegacyHistory();
+      await syncSnapshotHistory(existingCurrent);
+      return NextResponse.json(existingCurrent, { headers });
+    }
 
     const canonical = await publishCanonicalSnapshot(windowId, response, force);
     await migrateLegacyHistory();
