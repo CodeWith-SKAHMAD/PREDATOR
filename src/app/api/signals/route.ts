@@ -252,6 +252,11 @@ async function migrateLegacyHistory() {
 
 async function syncSnapshotHistory(data: ScanCache["data"]) {
   if (!sharedSupabase || !data.rows?.length) return;
+
+  // Archive every signal into the shared history store so it cannot be lost
+  // when a force-refresh replaces the current-window snapshot. The history
+  // read path filters by expires_at, so active signals remain invisible in
+  // the History tab until their expiry boundary has passed.
   try {
     const rows = data.rows.map((signal) => ({
       window_id: data.windowId,
@@ -350,7 +355,16 @@ async function readGlobalHistory(): Promise<GlobalHistoryRow[]> {
     });
   }
 
-  const sorted = [...merged.values()].sort(
+  const now = Date.now();
+  const expiredOnly = [...merged.values()].filter((row) => {
+    const expiresAt = row.expires_at == null ? NaN : Date.parse(String(row.expires_at));
+    // Older legacy rows may not have an expiry timestamp; those are already
+    // historical records, so keep them visible. New/current rows are shown
+    // only after their expiry boundary.
+    return !Number.isFinite(expiresAt) || expiresAt <= now;
+  });
+
+  const sorted = expiredOnly.sort(
     (a, b) => Date.parse(String(b.signal_time)) - Date.parse(String(a.signal_time)),
   );
 
@@ -1084,6 +1098,8 @@ export async function GET(request: Request) {
     // so force scans can never make the previous signal set disappear.
     const force = url.searchParams.get("force") === "1";
     const existingCurrent = await readSharedSnapshot(windowId);
+    // Archive the current snapshot before a force refresh can replace it.
+    // These rows stay hidden from the History view until expires_at is reached.
     if (existingCurrent && force) {
       await syncSnapshotHistory(existingCurrent);
     }
@@ -1091,7 +1107,8 @@ export async function GET(request: Request) {
     if (!force) {
       if (existingCurrent) {
         await migrateLegacyHistory();
-        await syncSnapshotHistory(existingCurrent);
+        // Do not write the current active snapshot into History. It will be
+        // archived when its expiresAt boundary is reached.
         return NextResponse.json(existingCurrent, { headers });
       }
 
