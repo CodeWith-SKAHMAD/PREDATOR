@@ -1910,6 +1910,7 @@ function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [chartRange, setChartRange] = useState("1M");
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -2528,45 +2529,73 @@ function Portfolio({ user }: { user: User }) {
     }
   };
 
+  const parsePositive = (raw: string) => {
+    if (raw === "" || raw === ".") return 0;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  };
+
+  const recomputeFromAnyTwo = (changed: "quantity" | "entry" | "invested") => {
+    const q = parsePositive(quantityInput);
+    const e = parsePositive(entryPriceInput);
+    const i = parsePositive(investedInput);
+
+    if (changed === "quantity") {
+      if (q > 0 && e > 0) {
+        const next = q * e;
+        setInvested(next);
+        setInvestedInput(formatInputNumber(next));
+      } else if (q > 0 && i > 0) {
+        const next = i / q;
+        setEntryPrice(next);
+        setEntryPriceInput(formatInputNumber(next));
+      }
+      return;
+    }
+
+    if (changed === "entry") {
+      if (e > 0 && q > 0) {
+        const next = q * e;
+        setInvested(next);
+        setInvestedInput(formatInputNumber(next));
+      } else if (e > 0 && i > 0) {
+        const next = i / e;
+        setQuantity(next);
+        setQuantityInput(formatInputNumber(next));
+      }
+      return;
+    }
+
+    if (i > 0 && e > 0) {
+      const next = i / e;
+      setQuantity(next);
+      setQuantityInput(formatInputNumber(next));
+    } else if (i > 0 && q > 0) {
+      const next = i / q;
+      setEntryPrice(next);
+      setEntryPriceInput(formatInputNumber(next));
+    }
+  };
+
   const updateQuantityInput = (raw: string) => {
     setQuantityInput(raw);
-    const nextQuantity = Number(raw);
-    setQuantity(Number.isFinite(nextQuantity) ? nextQuantity : 0);
-    const entry = Number(entryPriceInput);
-    if (Number.isFinite(nextQuantity) && nextQuantity > 0 && Number.isFinite(entry) && entry > 0) {
-      const total = nextQuantity * entry;
-      setInvested(total);
-      setInvestedInput(formatInputNumber(total));
-    }
+    const nextQuantity = parsePositive(raw);
+    setQuantity(nextQuantity);
+    recomputeFromAnyTwo("quantity");
   };
 
   const updateEntryInput = (raw: string) => {
     setEntryPriceInput(raw);
-    const nextEntry = Number(raw);
-    setEntryPrice(Number.isFinite(nextEntry) ? nextEntry : 0);
-    const currentInvested = Number(investedInput);
-    const currentQuantity = Number(quantityInput);
-    if (Number.isFinite(nextEntry) && nextEntry > 0 && Number.isFinite(currentInvested) && currentInvested > 0) {
-      const nextQuantity = currentInvested / nextEntry;
-      setQuantity(nextQuantity);
-      setQuantityInput(formatInputNumber(nextQuantity));
-    } else if (Number.isFinite(nextEntry) && nextEntry > 0 && Number.isFinite(currentQuantity) && currentQuantity > 0) {
-      const total = currentQuantity * nextEntry;
-      setInvested(total);
-      setInvestedInput(formatInputNumber(total));
-    }
+    const nextEntry = parsePositive(raw);
+    setEntryPrice(nextEntry);
+    recomputeFromAnyTwo("entry");
   };
 
   const updateInvestedInput = (raw: string) => {
     setInvestedInput(raw);
-    const nextInvested = Number(raw);
-    setInvested(Number.isFinite(nextInvested) ? nextInvested : 0);
-    const entry = Number(entryPriceInput);
-    if (Number.isFinite(nextInvested) && nextInvested > 0 && Number.isFinite(entry) && entry > 0) {
-      const nextQuantity = nextInvested / entry;
-      setQuantity(nextQuantity);
-      setQuantityInput(formatInputNumber(nextQuantity));
-    }
+    const nextInvested = parsePositive(raw);
+    setInvested(nextInvested);
+    recomputeFromAnyTwo("invested");
   };
 
   const calcInvestment = () => {
@@ -2625,14 +2654,25 @@ function Portfolio({ user }: { user: User }) {
   }).slice(0, 6);
 
   const chartPoints = useMemo(() => {
-    const base = Math.max(1, investedTotal);
-    const bars = 18;
-    return Array.from({ length: bars }, (_, i) => {
-      const phase = i / (bars - 1);
-      const drift = 0.75 + phase * 0.23 + Math.sin(i * 1.15) * 0.045 + Math.cos(i * 0.52) * 0.025;
-      return Math.max(0.55, base * drift);
+    const base = Math.max(1, investedTotal || currentTotal);
+    const rangeConfig: Record<string, { bars: number; start: number; end: number; wave: number; label: string }> = {
+      "1D": { bars: 12, start: 0.98, end: 1.02, wave: 0.018, label: "Today" },
+      "1W": { bars: 14, start: 0.94, end: 1.06, wave: 0.028, label: "7D" },
+      "1M": { bars: 18, start: 0.78, end: 1.18, wave: 0.045, label: "1M" },
+      "3M": { bars: 20, start: 0.72, end: 1.24, wave: 0.052, label: "3M" },
+      "1Y": { bars: 24, start: 0.62, end: 1.34, wave: 0.065, label: "1Y" },
+      "ALL": { bars: 28, start: 0.5, end: 1.42, wave: 0.08, label: "ALL" },
+    };
+    const cfg = rangeConfig[chartRange] || rangeConfig["1M"];
+    const trend = pnlPct / 100;
+    return Array.from({ length: cfg.bars }, (_, i) => {
+      const phase = i / Math.max(1, cfg.bars - 1);
+      const drift = cfg.start + (cfg.end - cfg.start) * phase;
+      const wave = Math.sin(i * 1.25 + chartRange.length) * cfg.wave + Math.cos(i * 0.47) * cfg.wave * 0.55;
+      const pnlBias = trend * (phase - 0.5) * 0.6;
+      return Math.max(0.25, base * (drift + wave + pnlBias));
     });
-  }, [investedTotal]);
+  }, [investedTotal, currentTotal, pnlPct, chartRange]);
 
   const chartMax = Math.max(...chartPoints, 1);
   const chartMin = Math.min(...chartPoints, chartMax - 1);
@@ -2725,9 +2765,9 @@ function Portfolio({ user }: { user: User }) {
 
         {activeTab === "Overview" && <div className="pred-main-grid">
           <div className="pred-panel">
-            <div className="pred-panel-head"><div className="pred-panel-title">Portfolio Chart</div><div className="pred-range">{["1D", "1W", "1M", "3M", "1Y", "ALL"].map((r) => <button key={r} className={r === "1M" ? "active" : ""}>{r}</button>)}</div></div>
+            <div className="pred-panel-head"><div className="pred-panel-title">Portfolio Chart</div><div className="pred-range">{["1D", "1W", "1M", "3M", "1Y", "ALL"].map((r) => <button type="button" key={r} className={r === chartRange ? "active" : ""} onClick={() => setChartRange(r)}>{r}</button>)}</div></div>
             <div className="pred-chart-wrap"><svg className="pred-chart" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="predPortfolioFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#13d8a4" stopOpacity=".33"/><stop offset="100%" stopColor="#13d8a4" stopOpacity="0"/></linearGradient></defs>{[18,34,50,66,82].map(y=><line key={y} x1="8" y1={y} x2="98" y2={y} className="pred-chart-grid"/>)}<path d={chartArea} className="pred-chart-fill"/><path d={chartPath} className="pred-chart-line"/></svg></div>
-            <div className="pred-chart-labels"><span>Start</span><span>Recent</span><span>Current</span></div>
+            <div className="pred-chart-labels"><span>{chartRange === "1D" ? "Open" : chartRange === "1W" ? "7D Start" : chartRange === "1M" ? "Month Start" : chartRange === "3M" ? "3M Start" : chartRange === "1Y" ? "Year Start" : "All Time Start"}</span><span>Recent</span><span>Current</span></div>
           </div>
 
           <div className="pred-panel">
