@@ -1172,7 +1172,11 @@ function Signals({
 
   const topRows = rows.slice(0, 24);
 
-  const historyGroups = history.reduce<
+  const expiredHistory = history.filter((row) =>
+    !row.expires_at || new Date(row.expires_at).getTime() <= Date.now()
+  );
+
+  const historyGroups = expiredHistory.reduce<
     Record<string, HistoryRow[]>
   >((groups, row) => {
     if (!groups[row.symbol]) {
@@ -1251,8 +1255,8 @@ function Signals({
           type="button"
         >
           History
-          {history.length > 0
-            ? ` · ${history.length}`
+          {expiredHistory.length > 0
+            ? ` · ${expiredHistory.length}`
             : ""}
         </button>
 
@@ -1443,11 +1447,14 @@ function Signals({
                   gap: 10,
                 }}
               >
-                {history.slice(0, 48).map((item) => {
+                {history
+                  .filter((item) =>
+                    !item.expires_at || new Date(item.expires_at).getTime() <= Date.now()
+                  )
+                  .slice(0, 48)
+                  .map((item) => {
                   const meta = item.tool_scores?.__meta;
-                  const expired = item.expires_at
-                    ? new Date(item.expires_at).getTime() <= Date.now()
-                    : true;
+                  const expired = true;
 
                   return (
                     <CompactSignalCard
