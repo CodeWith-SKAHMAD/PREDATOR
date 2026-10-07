@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 300;
 
-const CURRENT_ENGINE_VERSION = "scalp-v9-force-funding";
+const CURRENT_ENGINE_VERSION = "scalp-v11-trigger-history-preserve";
 const WINDOW_MS = 30 * 60 * 1000;
 
 const SPOT_BASES = [
@@ -259,7 +259,8 @@ async function syncSnapshotHistory(data: ScanCache["data"]) {
       direction: signal.direction,
       score: signal.score,
       status: signal.status,
-      price: signal.price,
+      // Persist the trigger/candle price, not the later live ticker price.
+      price: signal.triggerPrice,
       signal_time: signal.capturedAt,
       expires_at: signal.expiresAt,
       volume_spike: signal.volumeSpike,
@@ -275,6 +276,8 @@ async function syncSnapshotHistory(data: ScanCache["data"]) {
           resistanceDistance: signal.resistanceDistance,
           fundingRate: signal.fundingRate,
           baseAsset: signal.baseAsset,
+          currentPrice: signal.price,
+          triggerPrice: signal.triggerPrice,
           capturedAt: signal.capturedAt,
         },
       },
@@ -291,13 +294,84 @@ async function syncSnapshotHistory(data: ScanCache["data"]) {
 
 async function readGlobalHistory(): Promise<GlobalHistoryRow[]> {
   const supabase = requireSharedSupabase();
-  const { data, error } = await supabase
-    .from("signal_history_global")
-    .select("id, window_id, symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason")
-    .order("signal_time", { ascending: false })
-    .limit(500);
-  if (error) throw new Error(`Global history read failed: ${error.message}`);
-  return (data ?? []) as GlobalHistoryRow[];
+
+  const [{ data: globalData, error: globalError }, { data: legacyData, error: legacyError }] =
+    await Promise.all([
+      supabase
+        .from("signal_history_global")
+        .select("id, window_id, symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason")
+        .order("signal_time", { ascending: false })
+        .limit(1000),
+      supabase
+        .from("signal_history")
+        .select("symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason")
+        .order("signal_time", { ascending: false })
+        .limit(5000),
+    ]);
+
+  if (globalError && legacyError) {
+    throw new Error(`History read failed: ${globalError.message}`);
+  }
+
+  // Keep everything already in the new global table, then backfill any older
+  // legacy rows that were never migrated. Deduplicate by scan window + symbol
+  // so history survives engine/version changes and force scans.
+  const merged = new Map<string, GlobalHistoryRow>();
+
+  for (const row of (globalData ?? []) as GlobalHistoryRow[]) {
+    const key = `${row.window_id}:${row.symbol}`;
+    if (!merged.has(key)) merged.set(key, row);
+  }
+
+  for (const row of (legacyData ?? []) as Array<any>) {
+    const timestamp = Date.parse(String(row.signal_time ?? ""));
+    if (!Number.isFinite(timestamp)) continue;
+    const windowId = Math.floor(timestamp / WINDOW_MS);
+    const symbol = String(row.symbol ?? "");
+    if (!symbol) continue;
+
+    const key = `${windowId}:${symbol}`;
+    if (merged.has(key)) continue;
+
+    merged.set(key, {
+      id: 0,
+      window_id: windowId,
+      symbol,
+      direction: row.direction === "SHORT" ? "SHORT" : "LONG",
+      score: Number(row.score ?? 0),
+      status: String(row.status ?? ""),
+      price: row.price == null ? null : Number(row.price),
+      signal_time: String(row.signal_time),
+      expires_at: row.expires_at ?? null,
+      volume_spike: row.volume_spike == null ? null : Number(row.volume_spike),
+      rsi: row.rsi == null ? null : Number(row.rsi),
+      tool_scores: row.tool_scores ?? {},
+      reason: row.reason ?? null,
+    });
+  }
+
+  const sorted = [...merged.values()].sort(
+    (a, b) => Date.parse(String(b.signal_time)) - Date.parse(String(a.signal_time)),
+  );
+
+  // Global rows keep their database id. Legacy-only rows get stable negative
+  // ids so React keys remain unique without changing the database schema.
+  const usedIds = new Set<number>();
+  return sorted.slice(0, 500).map((row, index) => {
+    if (row.id > 0 && !usedIds.has(row.id)) {
+      usedIds.add(row.id);
+      return row;
+    }
+    return { ...row, id: -(index + 1) };
+  });
+}
+
+async function preserveSnapshotAsHistory(windowId: number) {
+  if (windowId < 0 || !sharedSupabase) return;
+  const previous = await readSharedSnapshot(windowId);
+  if (previous?.rows?.length) {
+    await syncSnapshotHistory(previous);
+  }
 }
 
 async function publishCanonicalSnapshot(
@@ -954,14 +1028,24 @@ export async function GET(request: Request) {
     // Database snapshot is the source of truth. Normal requests reuse the
     // canonical snapshot. A force request intentionally re-scans the current
     // 30-minute window and overwrites that window's canonical snapshot.
+    // Before any overwrite, preserve the existing active snapshot into history
+    // so force scans can never make the previous signal set disappear.
     const force = url.searchParams.get("force") === "1";
+    const existingCurrent = await readSharedSnapshot(windowId);
+    if (existingCurrent && force) {
+      await syncSnapshotHistory(existingCurrent);
+    }
+
     if (!force) {
-      const sharedSnapshot = await readSharedSnapshot(windowId);
-      if (sharedSnapshot) {
+      if (existingCurrent) {
         await migrateLegacyHistory();
-        await syncSnapshotHistory(sharedSnapshot);
-        return NextResponse.json(sharedSnapshot, { headers });
+        await syncSnapshotHistory(existingCurrent);
+        return NextResponse.json(existingCurrent, { headers });
       }
+
+      // If this is a new scan window, preserve the previous window before any
+      // new snapshot is created. This makes expiry/history deterministic.
+      await preserveSnapshotAsHistory(windowId - 1);
     }
 
     const [exchangeInfo, tickers, books] = await Promise.all([
