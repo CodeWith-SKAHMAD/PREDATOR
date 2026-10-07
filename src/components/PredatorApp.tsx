@@ -2535,10 +2535,14 @@ function Portfolio({ user }: { user: User }) {
     return Number.isFinite(value) && value > 0 ? value : 0;
   };
 
-  const recomputeFromAnyTwo = (changed: "quantity" | "entry" | "invested") => {
-    const q = parsePositive(quantityInput);
-    const e = parsePositive(entryPriceInput);
-    const i = parsePositive(investedInput);
+  const recomputeFromAnyTwo = (changed: "quantity" | "entry" | "invested", rawOverride?: string) => {
+    const qRaw = changed === "quantity" ? (rawOverride ?? quantityInput) : quantityInput;
+    const eRaw = changed === "entry" ? (rawOverride ?? entryPriceInput) : entryPriceInput;
+    const iRaw = changed === "invested" ? (rawOverride ?? investedInput) : investedInput;
+
+    const q = parsePositive(qRaw);
+    const e = parsePositive(eRaw);
+    const i = parsePositive(iRaw);
 
     if (changed === "quantity") {
       if (q > 0 && e > 0) {
@@ -2566,6 +2570,7 @@ function Portfolio({ user }: { user: User }) {
       return;
     }
 
+    // Total invested changed: use the actual current entry or quantity value.
     if (i > 0 && e > 0) {
       const next = i / e;
       setQuantity(next);
@@ -2579,23 +2584,20 @@ function Portfolio({ user }: { user: User }) {
 
   const updateQuantityInput = (raw: string) => {
     setQuantityInput(raw);
-    const nextQuantity = parsePositive(raw);
-    setQuantity(nextQuantity);
-    recomputeFromAnyTwo("quantity");
+    setQuantity(parsePositive(raw));
+    recomputeFromAnyTwo("quantity", raw);
   };
 
   const updateEntryInput = (raw: string) => {
     setEntryPriceInput(raw);
-    const nextEntry = parsePositive(raw);
-    setEntryPrice(nextEntry);
-    recomputeFromAnyTwo("entry");
+    setEntryPrice(parsePositive(raw));
+    recomputeFromAnyTwo("entry", raw);
   };
 
   const updateInvestedInput = (raw: string) => {
     setInvestedInput(raw);
-    const nextInvested = parsePositive(raw);
-    setInvested(nextInvested);
-    recomputeFromAnyTwo("invested");
+    setInvested(parsePositive(raw));
+    recomputeFromAnyTwo("invested", raw);
   };
 
   const calcInvestment = () => {
