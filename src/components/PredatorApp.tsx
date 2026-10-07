@@ -1910,7 +1910,6 @@ function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [chartRange, setChartRange] = useState("1M");
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -2381,6 +2380,7 @@ function Portfolio({ user }: { user: User }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [activeTab, setActiveTab] = useState<PortfolioTab>("Overview");
+  const [chartRange, setChartRange] = useState("1M");
   const [showForm, setShowForm] = useState(false);
   const [currencyOpen, setCurrencyOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
