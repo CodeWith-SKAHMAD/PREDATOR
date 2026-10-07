@@ -3,7 +3,13 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const API_BASE = "https://api.binance.com";
+const BINANCE_HOSTS = [
+  "https://api.binance.com",
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+  "https://api3.binance.com",
+  "https://data-api.binance.vision",
+];
 const ALLOWED_INTERVALS = new Set(["1h", "4h", "1d"]);
 const stableAssets = new Set(["USDT", "USDC", "FDUSD", "TUSD", "USDE", "DAI", "BUSD"]);
 
@@ -18,14 +24,33 @@ type Row = {
   level: "Extreme" | "High" | "Moderate" | "Normal";
 };
 
-async function fetchJson<T>(url: string, ms = 6500): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  try {
-    const r = await fetch(url, { cache: "no-store", signal: controller.signal });
-    if (!r.ok) throw new Error(`Request failed: ${r.status}`);
-    return await r.json() as T;
-  } finally { clearTimeout(timer); }
+async function fetchJson<T>(path: string, ms = 6500): Promise<T> {
+  let lastError = "Binance market data unavailable";
+
+  for (const host of BINANCE_HOSTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+      const r = await fetch(`${host}${path}`, {
+        cache: "no-store",
+        signal: controller.signal,
+        headers: { accept: "application/json" },
+      });
+
+      if (!r.ok) {
+        lastError = `Request failed: ${r.status}`;
+        continue;
+      }
+
+      return await r.json() as T;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : lastError;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  throw new Error(lastError);
 }
 
 function rsi(closes: number[], period = 14): number | null {
@@ -73,8 +98,8 @@ export async function GET(request: Request) {
 
   try {
     const [exchangeInfo, tickers] = await Promise.all([
-      fetchJson<{symbols:SymbolInfo[]}>(`${API_BASE}/api/v3/exchangeInfo`),
-      fetchJson<Ticker[]>(`${API_BASE}/api/v3/ticker/24hr`),
+      fetchJson<{symbols:SymbolInfo[]}>(`/api/v3/exchangeInfo`),
+      fetchJson<Ticker[]>(`/api/v3/ticker/24hr`),
     ]);
 
     const allowed = new Map(exchangeInfo.symbols
@@ -88,7 +113,7 @@ export async function GET(request: Request) {
       .filter(x => Number.isFinite(x.quoteVolume24h) && x.quoteVolume24h >= 1_000_000 && Number.isFinite(x.price) && x.price > 0);
 
     const primary = await concurrency(candidates, 24, async (c) => {
-      const k = await fetchJson<Kline[]>(`${API_BASE}/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=${interval}&limit=24`);
+      const k = await fetchJson<Kline[]>(`/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=${interval}&limit=24`);
       if (k.length < 16) return null;
       const vols = k.slice(0,-1).map(x => Number(x[7])).filter(Number.isFinite);
       const current = Number(k.at(-1)?.[7]);
@@ -105,9 +130,9 @@ export async function GET(request: Request) {
 
     const rows = await concurrency(baseRows, 18, async (c) => {
       const [k1h,k4h,k1d] = await Promise.all([
-        fetchJson<Kline[]>(`${API_BASE}/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=1h&limit=2`),
-        fetchJson<Kline[]>(`${API_BASE}/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=4h&limit=2`),
-        fetchJson<Kline[]>(`${API_BASE}/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=1d&limit=2`),
+        fetchJson<Kline[]>(`/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=1h&limit=2`),
+        fetchJson<Kline[]>(`/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=4h&limit=2`),
+        fetchJson<Kline[]>(`/api/v3/klines?symbol=${encodeURIComponent(c.symbol)}&interval=1d&limit=2`),
       ]);
       return {
         ...c,
