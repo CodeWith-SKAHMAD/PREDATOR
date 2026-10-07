@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 export const maxDuration = 300;
 
-const CURRENT_ENGINE_VERSION = "scalp-v12-volume-impulse-retest-force";
+const CURRENT_ENGINE_VERSION = "scalp-v17-hard-filter-rebalanced";
 const WINDOW_MS = 30 * 60 * 1000;
 
 const SPOT_BASES = [
@@ -671,13 +671,16 @@ function rsiTool(value: number | null): ToolResult {
 }
 
 
-function liquidityTool(_volume24h: number, spreadBps: number | null): ToolResult {
-  // Do not hard-exclude small-cap coins by 24h volume. For scalping,
-  // executable spread is the primary liquidity-quality check here.
-  if (spreadBps !== null && spreadBps <= 10) {
+function liquidityTool(volume24h: number, spreadBps: number | null): ToolResult {
+  // Keep the full Binance USDT universe, but require either an executable spread
+  // or enough 24h quote liquidity to trade a scalping setup when bookTicker is unavailable.
+  if (spreadBps !== null && spreadBps <= 15) {
     return tool(10, `Executable spread ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
   }
-  return tool(0, spreadBps === null ? "Order-book spread unavailable" : `Wide spread ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
+  if (spreadBps === null && Number.isFinite(volume24h) && volume24h >= 750_000) {
+    return tool(10, `24h quote liquidity $${(volume24h / 1e6).toFixed(1)}M`, "NEUTRAL");
+  }
+  return tool(0, spreadBps === null ? "Liquidity quality unavailable" : `Wide spread ${spreadBps.toFixed(1)} bps`, "NEUTRAL");
 }
 
 function atrTool(atrPercent: number | null): ToolResult {
@@ -787,7 +790,8 @@ function passesHardScalpFilter(args: {
     || (tools["Market Structure"]?.bias === direction && tools["Market Structure"]?.score === 10);
   if (!trendCore) return false;
 
-  if (tools["Trend Strength"]?.score !== 10) return false;
+  const trendStrengthOrMomentum = tools["Trend Strength"]?.score === 10 || tools["Momentum Alignment"]?.score === 10 || tools["Market Structure"]?.score === 10;
+  if (!trendStrengthOrMomentum) return false;
 
   const momentumCore = (tools.RSI?.bias === direction && tools.RSI?.score === 10)
     || (tools.MACD?.bias === direction && tools.MACD?.score === 10)
@@ -809,14 +813,14 @@ function passesHardScalpFilter(args: {
     if (!healthy) return false;
   }
 
-  if (currentRangePercent > 4.5) return false;
-  if (atrPercent === null || atrPercent < 0.20 || atrPercent > 4.5) return false;
-  if (spreadBps === null || spreadBps > 15) return false;
-  if (Math.max(volumeSpike, recentVolumeBurst) < 1.20) return false;
+  if (currentRangePercent > 8) return false;
+  if (atrPercent === null || atrPercent < 0.15 || atrPercent > 5.5) return false;
+  if (spreadBps !== null && spreadBps > 20) return false;
+  if (Math.max(volumeSpike, recentVolumeBurst) < 1.10) return false;
 
   const srFavorable = direction === "LONG"
-    ? (supportDistance <= 3.5 && supportDistance < resistanceDistance)
-    : (resistanceDistance <= 3.5 && resistanceDistance < supportDistance);
+    ? (supportDistance <= 5.0 && supportDistance < resistanceDistance)
+    : (resistanceDistance <= 5.0 && resistanceDistance < supportDistance);
   const retestLocation = direction === "LONG" ? pullbackLong : pullbackShort;
   const breakoutConfirmed = direction === "LONG" ? breakoutLong : breakoutShort;
   const volumeConfirmed = tools["Volume Pressure"]?.bias === direction
@@ -829,7 +833,7 @@ function passesHardScalpFilter(args: {
   const { longVotes, shortVotes } = directionalTotals(tools);
   const directionalVotes = direction === "LONG" ? longVotes : shortVotes;
   const opposingVotes = direction === "LONG" ? shortVotes : longVotes;
-  if (directionalVotes < 6 || opposingVotes > 2) return false;
+  if (directionalVotes < 5 || opposingVotes > 3) return false;
 
   return true;
 }
