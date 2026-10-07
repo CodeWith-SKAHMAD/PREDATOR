@@ -974,6 +974,7 @@ function Signals({
 
   type HistoryRow = {
     id: number;
+    window_id: number;
     symbol: string;
     direction: "LONG" | "SHORT";
     score: number;
@@ -986,6 +987,8 @@ function Signals({
     tool_scores: (Record<string, ToolResult> & { __meta?: HistoryMeta }) | null;
     reason: string | null;
   };
+
+  const SCAN_WINDOW_MS = 30 * 60 * 1000;
 
   type SignalSnapshot = {
     windowId: number;
@@ -1000,7 +1003,6 @@ function Signals({
   const [view, setView] = useState<"active" | "history">("active");
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
-  const [savingHistory, setSavingHistory] = useState(false);
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [last, setLast] = useState<Date | null>(null);
@@ -1045,160 +1047,50 @@ function Signals({
   };
 
   async function loadHistory() {
-    if (!supabase) {
-      setHistoryLoading(false);
-      return;
-    }
-
     setHistoryLoading(true);
     setHistoryError("");
 
-    const { data, error: historyLoadError } = await supabase
-      .from("signal_history")
-      .select(
-        "id, symbol, direction, score, status, price, signal_time, expires_at, volume_spike, rsi, tool_scores, reason"
-      )
-      .eq("user_id", user.id)
-      .order("signal_time", { ascending: false })
-      .limit(200);
-
-    if (historyLoadError) {
-      setHistoryError(historyLoadError.message);
-    } else {
-      setHistory((data ?? []) as HistoryRow[]);
-    }
-
-    setHistoryLoading(false);
-  }
-
-  async function saveNewSignals(signalRows: SignalRow[]) {
-    if (!supabase || signalRows.length === 0) return;
-
-    const qualifying = signalRows.filter(
-      (signal) =>
-        signal.score >= 80 &&
-        (signal.direction === "LONG" ||
-          signal.direction === "SHORT")
-    );
-
-    if (qualifying.length === 0) return;
-
-    setSavingHistory(true);
-
     try {
-      const now = new Date();
-      const nowIso = now.toISOString();
-
-      const symbols = qualifying.map(
-        (signal) => signal.symbol
+      const response = await fetch(`/api/signals?history=1&ts=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "History load failed");
+      }
+      setHistory((payload.history ?? []) as HistoryRow[]);
+    } catch (err) {
+      setHistoryError(
+        err instanceof Error ? err.message : "History load failed",
       );
-
-      const { data: activeRows, error: activeError } =
-        await supabase
-          .from("signal_history")
-          .select("symbol")
-          .eq("user_id", user.id)
-          .in("symbol", symbols)
-          .gt("expires_at", nowIso);
-
-      if (activeError) {
-        setHistoryError(activeError.message);
-        return;
-      }
-
-      const activeSymbols = new Set(
-        (activeRows ?? []).map(
-          (item: { symbol: string }) => item.symbol
-        )
-      );
-
-      const newRows = qualifying
-        .filter(
-          (signal) =>
-            !activeSymbols.has(signal.symbol)
-        )
-        .map((signal) => {
-          const signalTime = new Date(
-            signal.capturedAt
-          );
-
-          const expiresAt = new Date(signal.expiresAt);
-
-          return {
-            user_id: user.id,
-            symbol: signal.symbol,
-            direction: signal.direction,
-            score: signal.score,
-            status:
-              signal.status ||
-              categoryLabel(signal.score),
-            price: signal.price,
-            signal_time: signalTime.toISOString(),
-            expires_at:
-              expiresAt.toISOString(),
-            volume_spike:
-              signal.volumeSpike,
-            rsi: signal.rsi,
-            tool_scores: {
-              ...signal.tools,
-              __meta: {
-                change15m: signal.change15m,
-                change1h: signal.change1h,
-                support: signal.support,
-                resistance: signal.resistance,
-                supportDistance: signal.supportDistance,
-                resistanceDistance: signal.resistanceDistance,
-                fundingRate: signal.fundingRate,
-                baseAsset: signal.baseAsset,
-                capturedAt: signal.capturedAt,
-              },
-            },
-            reason: signal.reasons.join(
-              " · "
-            ),
-          };
-        });
-
-      if (newRows.length === 0) {
-        return;
-      }
-
-      const { error: insertError } =
-        await supabase
-          .from("signal_history")
-          .insert(newRows);
-
-      if (insertError) {
-        setHistoryError(
-          insertError.message
-        );
-        return;
-      }
-
-      await loadHistory();
     } finally {
-      setSavingHistory(false);
+      setHistoryLoading(false);
     }
   }
+
+  const appliedWindowRef = useRef<number | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   const loadSignals = useCallback(async (mode: "initial" | "manual" | "auto" = "initial") => {
-    const forceNetwork = mode === "auto";
-    if (scanBusyRef.current && forceNetwork) return;
+    if (scanBusyRef.current) return;
     scanBusyRef.current = true;
+
     try {
       setError("");
-      if (mode === "auto" || mode === "initial" || mode === "manual") {
-        setLoading(mode === "auto" ? false : true);
-      }
+      if (mode === "initial") setLoading(true);
+      setScanning(true);
 
-      // IMPORTANT: do not use browser/sessionStorage as the signal source.
-      // The API now returns one shared Supabase-backed snapshot for everyone.
-      // This guarantees PC/mobile/different accounts see identical results
-      // during the same 30-minute scan window.
-      const response = await fetch(`/api/signals?ts=${Date.now()}`, { cache: "no-store" });
+      // The API decides whether this window already has the canonical
+      // shared snapshot. At a real 30-minute boundary, a new snapshot is
+      // generated exactly once and then shared with every device/account.
+      const response = await fetch(`/api/signals?windowId=${Math.floor(Date.now() / SCAN_WINDOW_MS)}&ts=${Date.now()}`, {
+        cache: "no-store",
+      });
       const payload = await response.json();
 
-      if (!response.ok || !payload.ok) throw new Error(payload.error || "Signal scan failed");
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "Signal scan failed");
+      }
 
       const nextRows = (payload.rows ?? []) as SignalRow[];
       const serverNextScan = Number.isFinite(Date.parse(payload.nextScanAt || ""))
@@ -1207,37 +1099,55 @@ function Signals({
       const serverWindowStart = Number.isFinite(Date.parse(payload.windowStartAt || ""))
         ? Date.parse(payload.windowStartAt)
         : Date.now();
+      const serverWindowId = Number.isFinite(Number(payload.windowId))
+        ? Number(payload.windowId)
+        : Math.floor(serverWindowStart / SCAN_WINDOW_MS);
 
       setRows(nextRows);
       setLast(new Date(serverWindowStart));
       setNextScanAt(serverNextScan);
+      appliedWindowRef.current = serverWindowId;
+
       if (serverNextScan !== null) {
         setSeconds(Math.max(0, Math.ceil((serverNextScan - Date.now()) / 1000)));
       }
 
-      await saveNewSignals(nextRows);
+      // History is global/website-wide, not account-specific. The server
+      // mirrors legacy rows and the canonical scan into one shared store.
+      await loadHistory();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signal scan failed");
     } finally {
       setLoading(false);
+      setScanning(false);
       scanBusyRef.current = false;
     }
-  }, [user.id]);
+  }, []);
 
   useEffect(() => {
-    loadSignals("initial");
-    loadHistory();
+    void loadHistory();
+    void loadSignals("initial");
   }, [loadSignals]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const target = nextScanAt ?? 0;
-      const remaining = target ? Math.max(0, Math.ceil((target - Date.now()) / 1000)) : 0;
+      const now = Date.now();
+      const currentWindowId = Math.floor(now / SCAN_WINDOW_MS);
+      const target = nextScanAt ?? ((currentWindowId + 1) * SCAN_WINDOW_MS);
+      const remaining = Math.max(0, Math.ceil((target - now) / 1000));
       setSeconds(remaining);
-      if (target && Date.now() >= target && !scanBusyRef.current) {
-        loadSignals("auto");
+
+      // Do not depend on hitting an exact millisecond boundary. As soon as
+      // the clock enters the next 30-minute window, trigger the new scan.
+      if (
+        appliedWindowRef.current !== null &&
+        currentWindowId > appliedWindowRef.current &&
+        !scanBusyRef.current
+      ) {
+        void loadSignals("auto");
       }
-    }, 1000);
+    }, 500);
+
     return () => window.clearInterval(timer);
   }, [nextScanAt, loadSignals]);
 
@@ -1274,7 +1184,7 @@ function Signals({
             onClick={() =>
               loadSignals("manual")
             }
-            disabled={loading}
+            disabled={scanning}
           >
             <RefreshCw
               size={15}
@@ -1326,11 +1236,6 @@ function Signals({
             : ""}
         </button>
 
-        {savingHistory && (
-          <span className="muted">
-            Saving scan…
-          </span>
-        )}
       </div>
 
       {view === "active" ? (
@@ -1356,7 +1261,7 @@ function Signals({
                   }}
                 >
                   {loading
-                    ? "Scanning markets..."
+                    ? "Loading markets..."
                     : `${topRows.length} active signals`}
                 </h2>
               </div>
@@ -1407,14 +1312,6 @@ function Signals({
                     No qualifying signals right now.
                   </p>
 
-                  <p
-                    className="muted"
-                    style={{
-                      marginTop: "6px",
-                    }}
-                  >
-
-                  </p>
                 </div>
               )}
           </Card>
