@@ -1225,16 +1225,54 @@ function Signals({
     !row.expires_at || new Date(row.expires_at).getTime() <= Date.now()
   );
 
-  const historyGroups = expiredHistory.reduce<
-    Record<string, HistoryRow[]>
-  >((groups, row) => {
-    if (!groups[row.symbol]) {
-      groups[row.symbol] = [];
-    }
+  // History is presented as a rolling monthly journal:
+  // - the current calendar month stays in History
+  // - once the month changes, the old month's records automatically move
+  //   into Last Month Report without deleting them from the database
+  // - archived months remain available month-by-month
+  const monthKeyFor = (value: string) => {
+    const date = new Date(value);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  };
 
-    groups[row.symbol].push(row);
-    return groups;
-  }, {});
+  const monthLabelFor = (key: string) => {
+    const [year, month] = key.split("-").map(Number);
+    return new Date(year, month - 1, 1).toLocaleDateString(undefined, {
+      month: "long",
+      year: "numeric",
+    });
+  };
+
+  const nowForHistory = new Date();
+  const currentMonthKey = `${nowForHistory.getFullYear()}-${String(nowForHistory.getMonth() + 1).padStart(2, "0")}`;
+
+  const groupHistoryBySymbol = (items: HistoryRow[]) =>
+    items.reduce<Record<string, HistoryRow[]>>((groups, row) => {
+      if (!groups[row.symbol]) groups[row.symbol] = [];
+      groups[row.symbol].push(row);
+      return groups;
+    }, {});
+
+  const currentMonthHistory = expiredHistory.filter(
+    (row) => monthKeyFor(row.signal_time) === currentMonthKey,
+  );
+
+  const archivedByMonth = expiredHistory.reduce<Record<string, HistoryRow[]>>(
+    (groups, row) => {
+      const key = monthKeyFor(row.signal_time);
+      if (key !== currentMonthKey) {
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(row);
+      }
+      return groups;
+    },
+    {},
+  );
+
+  const historyGroups = groupHistoryBySymbol(currentMonthHistory);
+  const archiveMonths = Object.keys(archivedByMonth).sort((a, b) =>
+    b.localeCompare(a),
+  );
 
   return (
     <div className="page">
@@ -1304,8 +1342,8 @@ function Signals({
           type="button"
         >
           History
-          {expiredHistory.length > 0
-            ? ` · ${expiredHistory.length}`
+          {currentMonthHistory.length > 0
+            ? ` · ${currentMonthHistory.length}`
             : ""}
         </button>
 
@@ -1475,43 +1513,167 @@ function Signals({
                   Loading signal history…
                 </span>
               </div>
-            ) : Object.keys(historyGroups)
-                .length === 0 ? (
-              <div
-                style={{
-                  padding: "30px",
-                  textAlign: "center",
-                }}
-              >
-                <p className="muted">
-                  No signal history yet.
-                </p>
-              </div>
             ) : (
-              <div
-                className="signal-card-grid"
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                  gap: 10,
-                  alignItems: "start",
-                }}
-              >
-                {Object.entries(historyGroups)
-                  .sort(([, a], [, b]) => {
-                    const aTime = new Date(a[0]?.signal_time || 0).getTime();
-                    const bTime = new Date(b[0]?.signal_time || 0).getTime();
-                    return bTime - aTime;
-                  })
-                  .slice(0, 48)
-                  .map(([symbol, items]) => (
-                    <HistorySignalStack
-                      key={symbol}
-                      items={items}
-                      onCoinClick={onCoinClick}
-                    />
-                  ))}
-              </div>
+              <>
+                <section
+                  style={{
+                    marginBottom: archiveMonths.length > 0 ? 26 : 0,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div>
+                      <div className="label">CURRENT MONTH</div>
+                      <h3 style={{ margin: "4px 0 0", fontSize: 18 }}>
+                        {monthLabelFor(currentMonthKey)}
+                      </h3>
+                    </div>
+                    <span className="muted">
+                      {currentMonthHistory.length} expired signals · {Object.keys(historyGroups).length} coins
+                    </span>
+                  </div>
+
+                  {Object.keys(historyGroups).length === 0 ? (
+                    <div
+                      style={{
+                        padding: "26px",
+                        textAlign: "center",
+                        borderRadius: 14,
+                        border: "1px solid rgba(255,255,255,.07)",
+                        background: "rgba(255,255,255,.015)",
+                      }}
+                    >
+                      <p className="muted">No expired signals in the current month yet.</p>
+                    </div>
+                  ) : (
+                    <div
+                      className="signal-card-grid"
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                        gap: 10,
+                        alignItems: "start",
+                      }}
+                    >
+                      {Object.entries(historyGroups)
+                        .sort(([, a], [, b]) => {
+                          const aTime = new Date(a[0]?.signal_time || 0).getTime();
+                          const bTime = new Date(b[0]?.signal_time || 0).getTime();
+                          return bTime - aTime;
+                        })
+                        .slice(0, 48)
+                        .map(([symbol, items]) => (
+                          <HistorySignalStack
+                            key={`${currentMonthKey}-${symbol}`}
+                            items={items}
+                            onCoinClick={onCoinClick}
+                          />
+                        ))}
+                    </div>
+                  )}
+                </section>
+
+                <section>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div>
+                      <div className="label">LAST MONTH REPORT</div>
+                      <h3 style={{ margin: "4px 0 0", fontSize: 18 }}>
+                        Monthly archived signals
+                      </h3>
+                    </div>
+                    <span className="muted">
+                      {archiveMonths.length} month{archiveMonths.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  {archiveMonths.length === 0 ? (
+                    <div
+                      style={{
+                        padding: "26px",
+                        textAlign: "center",
+                        borderRadius: 14,
+                        border: "1px solid rgba(255,255,255,.07)",
+                        background: "rgba(255,255,255,.015)",
+                      }}
+                    >
+                      <p className="muted">No previous month report yet.</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 18 }}>
+                      {archiveMonths.map((monthKey) => {
+                        const monthRows = archivedByMonth[monthKey] || [];
+                        const monthGroups = groupHistoryBySymbol(monthRows);
+                        return (
+                          <section
+                            key={monthKey}
+                            style={{
+                              paddingTop: 2,
+                              borderTop: "1px solid rgba(255,255,255,.07)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 12,
+                                margin: "12px 0",
+                              }}
+                            >
+                              <div>
+                                <strong style={{ fontSize: 15 }}>{monthLabelFor(monthKey)}</strong>
+                                <span className="muted" style={{ marginLeft: 8 }}>
+                                  {monthRows.length} signals · {Object.keys(monthGroups).length} coins
+                                </span>
+                              </div>
+                            </div>
+
+                            <div
+                              className="signal-card-grid"
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                                gap: 10,
+                                alignItems: "start",
+                              }}
+                            >
+                              {Object.entries(monthGroups)
+                                .sort(([, a], [, b]) => {
+                                  const aTime = new Date(a[0]?.signal_time || 0).getTime();
+                                  const bTime = new Date(b[0]?.signal_time || 0).getTime();
+                                  return bTime - aTime;
+                                })
+                                .slice(0, 48)
+                                .map(([symbol, items]) => (
+                                  <HistorySignalStack
+                                    key={`${monthKey}-${symbol}`}
+                                    items={items}
+                                    onCoinClick={onCoinClick}
+                                  />
+                                ))}
+                            </div>
+                          </section>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
+              </>
             )}
           </Card>
         </div>
@@ -1964,7 +2126,6 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [sourceNote, setSourceNote] = useState("");
-  const [chartTf, setChartTf] = useState("1h");
 
   const load = async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -2056,21 +2217,35 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
         }
       }
 
-      const priceStructureScore = ema21 !== null && ema50 !== null
-        ? price > ema21 && ema21 > ema50 ? 90 : price > ema21 || ema21 > ema50 ? 65 : 30
-        : null;
-      const momentumScore = rsi === null
-        ? null
-        : (rsi >= 55 && rsi <= 68) || (rsi >= 32 && rsi <= 45 && change1h < 0)
-          ? 80 : rsi >= 50 ? 65 : 40;
+      const priceStructureScore =
+        ema21 !== null && ema50 !== null
+          ? price > ema21 && ema21 > ema50
+            ? 90
+            : price > ema21 || ema21 > ema50
+              ? 65
+              : 30
+          : null;
+      const momentumScore =
+        rsi === null
+          ? null
+          : (rsi >= 55 && rsi <= 68) || (rsi >= 32 && rsi <= 45 && change1h < 0)
+            ? 80
+            : rsi >= 50
+              ? 65
+              : 40;
       const volumeRatio = k1h.length >= 21
         ? Number(k1h.at(-1)?.[5]) / (k1h.slice(-21, -1).reduce((sum, k) => sum + Number(k[5]), 0) / 20)
         : null;
       const volumeScore = volumeRatio === null ? null : Math.max(25, Math.min(95, 55 + (volumeRatio - 1) * 25));
       const derivativesScore = oiUsd === null && fundingRate === null
-        ? null : Math.max(25, Math.min(90, 65 + (change1h >= 0 ? 12 : -10) - Math.min(Math.abs((fundingRate || 0) * 10000), 18)));
-      const liquidationScore = atrPercent === null ? null : atrPercent <= 2 ? 85 : atrPercent <= 4 ? 65 : 40;
-      const onchainScore = mvrv === null || nupl === null ? null : Math.max(20, Math.min(90, (mvrv >= 1 && mvrv <= 2.5 ? 80 : mvrv > 2.5 && mvrv < 3.5 ? 65 : mvrv >= 3.5 ? 35 : 55) + (nupl > 0 && nupl < 0.5 ? 8 : nupl >= 0.5 ? -8 : 0)));
+        ? null
+        : Math.max(25, Math.min(90, 65 + (change1h >= 0 ? 12 : -10) - Math.min(Math.abs((fundingRate || 0) * 10000), 18)));
+      const liquidationScore = atrPercent === null
+        ? null
+        : atrPercent <= 2 ? 85 : atrPercent <= 4 ? 65 : 40;
+      const onchainScore = mvrv === null || nupl === null
+        ? null
+        : Math.max(20, Math.min(90, (mvrv >= 1 && mvrv <= 2.5 ? 80 : mvrv > 2.5 && mvrv < 3.5 ? 65 : mvrv >= 3.5 ? 35 : 55)) + (nupl > 0 && nupl < 0.5 ? 8 : nupl >= 0.5 ? -8 : 0));
       const etfScore = etfFlow === null ? null : etfFlow > 0 ? 85 : etfFlow < 0 ? 35 : 60;
 
       const weighted = [
@@ -2082,15 +2257,25 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
         ? Math.round(usable.reduce((sum, [weight, score]) => sum + weight * (score || 0), 0) / usable.reduce((sum, [weight]) => sum + weight, 0))
         : 0;
 
-      const marketCondition = change1h > 0.8 && price > (ema21 || price)
-        ? "Bullish" : change1h < -0.8 && price < (ema21 || price) ? "Bearish" : "Range / Mixed";
+      const marketCondition =
+        change1h > 0.8 && price > (ema21 || price) ? "Bullish" :
+        change1h < -0.8 && price < (ema21 || price) ? "Bearish" : "Range / Mixed";
+
       const sevenDayRange = closes1h.slice(-168);
       const low7 = sevenDayRange.length ? Math.min(...sevenDayRange) : price;
       const high7 = sevenDayRange.length ? Math.max(...sevenDayRange) : price;
       const rangePosition = high7 > low7 ? (price - low7) / (high7 - low7) : 0.5;
-      const cycleScore = Math.round(Math.max(0, Math.min(100, 25 + (change7d + 10) * 2 + (rangePosition * 35) + (rsi ?? 50) * 0.2)));
+      const cycleScore = Math.round(Math.max(0, Math.min(100,
+        25 + (change7d + 10) * 2 + (rangePosition * 35) + (rsi ?? 50) * 0.2
+      )));
       const cycleStage = cycleScore < 25 ? "Accumulation" : cycleScore < 45 ? "Early Markup" : cycleScore < 70 ? "Markup" : cycleScore < 85 ? "Distribution Risk" : "Markdown";
 
+      const notes = [
+        `Price is ${marketCondition.toLowerCase()} on the current structure.`,
+        `15m ${formatPct(change15m)} · 1h ${formatPct(change1h)} · 7d ${formatPct(change7d)}.`,
+        `Support $${formatPrice(support)} · Resistance $${formatPrice(resistance)}.`,
+        `Cycle is a technical proxy${mvrv === null ? " because on-chain data is unavailable" : " using current market/on-chain context"}.`,
+      ];
       setSourceNote(`${mvrv === null ? "MVRV/NUPL unavailable" : "MVRV/NUPL loaded"} · ${etfFlow === null ? "ETF flow unavailable" : "ETF flow loaded"} · refreshed ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       setData({
         price, change24h: btcMarket.change24h, high24h: btcMarket.high24h, low24h: btcMarket.low24h, volume24h: btcMarket.quoteVolume24h,
@@ -2113,105 +2298,80 @@ function BTCReport({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
   }, []);
 
   const d = data;
-  const cycle10 = d ? d.cycleScore / 10 : 0;
-  const gaugeDeg = -90 + (cycle10 / 10) * 180;
-  const structureText = d ? (d.price > d.resistance * 0.995 ? "Testing Resistance" : d.price < d.support * 1.01 ? "Holding Support" : "Sideways / Cautious") : "Loading";
-  const cautionTone = d && d.marketCondition === "Bullish" ? "green" : d && d.marketCondition === "Bearish" ? "red" : "yellow";
-  const marketRead = d
-    ? `${d.marketCondition.toUpperCase()}: BTC is trading around $${formatCompactUsd(d.price).replace("$", "")}, with the current structure ${structureText.toLowerCase()}. ${d.price < d.resistance ? `Resistance sits near $${formatPrice(d.resistance)}.` : "Price is pressing above the recent resistance zone."}`
-    : "Loading the latest verified BTC market structure…";
-
-  const signalRows = d ? [
-    ["Price Structure", "Trend direction / key levels", `${structureText} · ${formatPct(d.change1h)}`, d.marketHealth >= 65 ? "Yellow" : "Red"],
-    ["ETF Flows", "Institutional demand", d.etfFlow === null ? "N/A" : `${d.etfFlow >= 0 ? "+" : ""}${d.etfFlow.toFixed(1)}M`, d.etfFlow === null ? "N/A" : d.etfFlow >= 0 ? "Green" : "Red"],
-    ["Funding Rates", "Long/short sentiment", d.fundingRate === null ? "N/A" : `${(d.fundingRate * 100).toFixed(4)}%`, d.fundingRate === null ? "N/A" : Math.abs(d.fundingRate) < 0.0002 ? "Yellow" : d.fundingRate > 0 ? "Green" : "Red"],
-    ["Open Interest", "Leverage / positioning", d.openInterestUsd === null ? "N/A" : formatCompactUsd(d.openInterestUsd), d.openInterestUsd === null ? "N/A" : "Yellow"],
-    ["MVRV / NUPL", "Cycle / top risk", d.mvrv === null || d.nupl === null ? "N/A" : `${d.mvrv.toFixed(2)} / ${d.nupl.toFixed(3)}`, d.mvrv === null ? "N/A" : d.mvrv > 3 ? "Red" : "Yellow"],
-    ["Liquidation Risk", "Forced longs / shorts", `${formatCompactUsd(d.longLiquidationUsd || 0)} / ${formatCompactUsd(d.shortLiquidationUsd || 0)}`, "Yellow"],
-    ["Volatility", "Short-term price swings", d.atrPercent === null ? "N/A" : `${d.atrPercent.toFixed(2)}% ATR`, d.atrPercent === null ? "N/A" : d.atrPercent > 4 ? "Red" : "Yellow"],
-  ] : [];
-
   return (
-    <div className="btc-report-v2">
-      <style>{`
-        .btc-report-v2{--btc-bg:#02070b;--btc-panel:rgba(6,17,25,.82);--btc-border:rgba(53,221,206,.28);--btc-green:#12e5a6;--btc-red:#ff4b64;--btc-yellow:#ffd22e;--btc-blue:#48b9ff;--btc-muted:#8ea4b7;color:#eff7fb;padding:4px 0 34px}
-        .btc-report-v2 *{box-sizing:border-box}.btc-r-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;padding:12px 0 16px}.btc-r-brand{display:flex;gap:16px;align-items:center}.btc-logo{width:72px;height:72px;border-radius:22px;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,#ffb52e,#f58c06 52%,#c96200);color:#fff;font-size:43px;font-weight:900;box-shadow:0 0 34px rgba(244,141,23,.18);border:1px solid rgba(255,255,255,.14)}.btc-r-kicker{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#7d94a8;font-weight:800}.btc-r-title{font-size:34px;line-height:1;font-weight:900;margin:2px 0 6px;letter-spacing:-.04em}.btc-r-price{font-size:36px;font-weight:900;letter-spacing:-.03em}.btc-r-price-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.btc-badge{padding:7px 11px;border-radius:9px;border:1px solid rgba(255,77,100,.38);background:rgba(255,77,100,.08);color:var(--btc-red);font-weight:800;font-size:12px}.btc-range{font-size:12px;color:#a1b3c1}.btc-r-actions{display:flex;gap:8px;align-items:center}.btc-mini-btn{border:1px solid rgba(117,168,201,.18);background:rgba(8,20,29,.82);color:#dceaf2;padding:9px 12px;border-radius:10px;display:flex;align-items:center;gap:7px;cursor:pointer}.btc-mini-btn:hover{border-color:rgba(72,185,255,.45);background:rgba(72,185,255,.08)}.btc-top-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.btc-top-card{padding:12px 14px;border:1px solid rgba(83,157,194,.22);border-radius:12px;background:linear-gradient(180deg,rgba(9,23,33,.78),rgba(5,14,21,.94));min-height:76px}.btc-top-card .k{font-size:10px;color:#9bb1bf}.btc-top-card .v{font-size:19px;font-weight:800;margin-top:4px}.btc-top-card .s{font-size:11px;margin-top:3px}.btc-green{color:var(--btc-green)}.btc-red{color:var(--btc-red)}.btc-yellow{color:var(--btc-yellow)}.btc-muted{color:var(--btc-muted)}
-        .btc-main-grid{display:grid;grid-template-columns:1.2fr .95fr .82fr;gap:9px;margin-top:10px}.btc-panel{border:1px solid var(--btc-border);border-radius:12px;background:linear-gradient(180deg,rgba(7,21,31,.78),rgba(3,10,16,.96));overflow:hidden;box-shadow:inset 0 0 24px rgba(20,184,170,.025)}.btc-panel-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:12px 14px 8px}.btc-section-title{display:flex;align-items:center;gap:8px;font-weight:900;font-size:14px;letter-spacing:.01em}.btc-section-title .accent{color:var(--btc-green)}.btc-sub{font-size:10px;color:#7891a5}.btc-tf{display:flex;gap:5px}.btc-tf button{padding:6px 9px;border:1px solid rgba(94,157,210,.14);border-radius:7px;background:rgba(6,18,27,.78);color:#92a8b8;cursor:pointer;font-size:10px}.btc-tf button.active{color:#fff;border-color:rgba(72,185,255,.6);background:rgba(72,185,255,.14)}.btc-chart{height:275px;padding:0 10px 10px}.btc-chart-surface{height:100%;border-radius:8px;background:linear-gradient(180deg,rgba(7,19,28,.96),rgba(4,13,19,.95));overflow:hidden;border:1px solid rgba(82,140,176,.1)}.btc-chart-footer{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:0 10px 10px}.btc-foot{padding:8px 10px;border-radius:8px;background:rgba(10,27,38,.62);border:1px solid rgba(90,148,181,.12)}.btc-foot .k{font-size:9px;color:#7790a3}.btc-foot .v{font-weight:900;font-size:16px;margin-top:2px}
-        .btc-read{padding:10px 14px 15px}.btc-read-hero{padding:13px;border-radius:10px;border:1px solid rgba(255,221,57,.2);background:linear-gradient(145deg,rgba(81,63,5,.18),rgba(4,14,19,.38))}.btc-read-state{font-size:18px;font-weight:900;letter-spacing:.02em;line-height:1.05}.btc-read-state span{display:block}.btc-read-copy{font-size:11px;line-height:1.55;color:#9fb2bf;margin-top:9px}.btc-level-strip{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.btc-level{padding:9px;border-radius:8px;border:1px solid rgba(94,157,210,.14);background:rgba(6,18,27,.58)}.btc-level .k{font-size:9px;color:#7b93a7}.btc-level .v{font-weight:900;font-size:13px;margin-top:3px}.btc-structure{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px}.btc-structure .box{padding:9px;border-radius:8px;background:rgba(7,20,29,.6);border:1px solid rgba(86,157,192,.12)}.btc-structure b{display:block;margin-top:3px;font-size:13px}
-        .btc-gauge{padding:14px}.btc-gauge-wrap{position:relative;height:172px;display:grid;place-items:center}.btc-gauge-ring{width:150px;height:150px;border-radius:50%;background:conic-gradient(from 270deg,#12dca6 0 25%,#ffd52e 25% 50%,#ff8d22 50% 75%,#ff475d 75% 100%);mask:radial-gradient(circle 50px,transparent 98%,#000 101%);-webkit-mask:radial-gradient(circle 50px,transparent 98%,#000 101%)}.btc-gauge-needle{position:absolute;bottom:50%;left:50%;width:3px;height:60px;background:#fff;border-radius:2px;transform-origin:50% 100%;box-shadow:0 0 12px rgba(255,255,255,.2)}.btc-gauge-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-36%);text-align:center}.btc-gauge-center .n{font-size:26px;font-weight:900}.btc-gauge-center .s{font-size:10px;color:#96a9b6}.btc-stage{padding:10px;border:1px solid rgba(18,229,166,.25);border-radius:9px;background:rgba(18,229,166,.04);font-size:10px;color:#9fb2bf}.btc-stage b{display:block;font-size:14px;color:#ffd33a;margin-top:3px}.btc-cycle-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:9px;font-size:8px;color:#8499aa}.btc-cycle-legend span{padding:5px 4px;border-radius:6px;background:rgba(8,21,31,.6);text-align:center}
-        .btc-signal-panel{margin-top:9px}.btc-table-wrap{overflow:auto}.btc-signal-table{width:100%;border-collapse:collapse;font-size:10px}.btc-signal-table th,.btc-signal-table td{padding:8px 9px;border-top:1px solid rgba(89,146,177,.1);text-align:left;white-space:nowrap}.btc-signal-table th{font-size:9px;color:#7791a4;text-transform:uppercase;letter-spacing:.06em}.btc-status-dot{display:inline-flex;align-items:center;gap:6px}.btc-status-dot i{width:8px;height:8px;border-radius:50%;display:inline-block}.dot-green{background:var(--btc-green)}.dot-yellow{background:var(--btc-yellow)}.dot-red{background:var(--btc-red)}.dot-na{background:#687885}
-        .btc-bottom-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:9px;margin-top:9px}.btc-metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;padding:10px 12px 12px}.btc-metric{padding:10px;border-radius:8px;background:rgba(7,21,31,.58);border:1px solid rgba(84,149,183,.1)}.btc-metric .k{font-size:9px;color:#7d95a6}.btc-metric .v{font-size:16px;font-weight:900;margin-top:3px}.btc-mini-bars{display:flex;align-items:flex-end;gap:4px;height:36px;margin-top:5px}.btc-mini-bars i{display:block;width:7px;border-radius:2px 2px 0 0;background:linear-gradient(180deg,#28c7ff,#126ea8);opacity:.86}.btc-mini-bars.green i{background:linear-gradient(180deg,#14e4a6,#14795e)}.btc-mini-bars.yellow i{background:linear-gradient(180deg,#ffdd2f,#9c7e12)}
-        .btc-cycle-map{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:11px}.btc-cycle-node{padding:11px 6px;border-radius:10px;text-align:center;border:1px solid rgba(89,150,184,.12);background:rgba(7,20,29,.6)}.btc-cycle-node .icon{font-size:20px}.btc-cycle-node .lbl{font-size:9px;color:#91a6b5;margin-top:5px}.btc-cycle-node.active{border-color:rgba(255,210,47,.45);background:rgba(255,210,47,.06)}.btc-takeaways,.btc-alerts,.btc-statement,.btc-watch{padding:10px 12px}.btc-list{display:grid;gap:7px;margin:7px 0 0;padding:0;list-style:none}.btc-list li{font-size:10px;color:#9eb0bd;display:flex;gap:8px;line-height:1.45}.btc-list b{color:#f2f7fa}.btc-rule{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-top:1px solid rgba(90,144,173,.1);font-size:10px;color:#a2b4bf}.btc-rule:first-child{border-top:0}.btc-rule-dot{width:9px;height:9px;border-radius:50%;margin-top:3px;flex:none}.btc-rule.green .btc-rule-dot{background:var(--btc-green)}.btc-rule.yellow .btc-rule-dot{background:var(--btc-yellow)}.btc-rule.red .btc-rule-dot{background:var(--btc-red)}.btc-statement-text{font-size:11px;line-height:1.6;color:#a1b3bf}.btc-watch-row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid rgba(90,144,173,.1);font-size:10px}.btc-watch-row:first-child{border-top:0}.btc-watch-row b{font-size:11px}
-        @media(max-width:1100px){.btc-main-grid{grid-template-columns:1fr}.btc-top-stats{grid-template-columns:repeat(2,1fr)}.btc-bottom-grid{grid-template-columns:1fr}}@media(max-width:760px){.btc-r-head{flex-direction:column}.btc-top-stats{grid-template-columns:1fr 1fr}.btc-chart{height:230px}.btc-metric-grid{grid-template-columns:1fr 1fr}.btc-cycle-map{grid-template-columns:1fr 1fr}.btc-price{font-size:27px}.btc-r-title{font-size:26px}}
-      `}</style>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">BTC INTELLIGENCE CENTER</p>
+          <h1>BTC Report</h1>
+          <p className="muted">Live structure, derivatives, on-chain context and cycle proxy.</p>
+        </div>
+        <div className="actions">
+          <button className="glass-btn" onClick={() => onCoinClick("BTCUSDT")} type="button">Open chart <ChevronRight size={14} /></button>
+          <button className="glass-btn" onClick={() => load(true)} disabled={refreshing} type="button"><RefreshCw size={14} /> {refreshing ? "Refreshing" : "Refresh"}</button>
+        </div>
+      </div>
 
-      <div className="btc-r-head">
-        <div className="btc-r-brand">
-          <div className="btc-logo">₿</div>
-          <div>
-            <div className="btc-r-kicker">Bitcoin market intelligence</div>
-            <div className="btc-r-price-row"><div className="btc-r-title">BITCOIN</div><span className="btc-badge">{d ? `${d.change24h >= 0 ? "▲" : "▼"} ${formatPct(d.change24h)} (24H)` : "Loading"}</span></div>
-            <div className="btc-r-price">{d ? `$${formatPrice(d.price)}` : "—"}</div>
-            <div className="btc-range">24h Range: {d ? `$${formatPrice(d.low24h)} – $${formatPrice(d.high24h)}` : "—"}</div>
+      {error && <div className="glass-card" style={{ padding: "12px 14px", marginBottom: "14px", color: "#ff7180" }}>{error}</div>}
+      {sourceNote && <p className="muted" style={{ margin: "0 0 12px", fontSize: "10px" }}>{sourceNote}</p>}
+
+      <div className="stats-grid">
+        <Card><span className="label">BTC PRICE</span><strong className="price">{loading || !d ? "—" : `$${formatPrice(d.price)}`}</strong><span className={d && d.change24h >= 0 ? "up" : "muted"}>{d ? formatPct(d.change24h) : "Loading..."}</span></Card>
+        <Card><span className="label">MARKET HEALTH</span><strong>{d ? `${d.marketHealth}/100` : "—"}</strong><span className={d && d.marketHealth >= 65 ? "up" : "muted"}>{d ? d.marketCondition : "Loading"}</span></Card>
+        <Card><span className="label">CYCLE SCORE</span><strong>{d ? d.cycleScore : "—"}</strong><span className="muted">{d ? d.cycleStage : "Loading"}</span></Card>
+        <Card><span className="label">FUNDING</span><strong>{d?.fundingRate === null || d?.fundingRate === undefined ? "N/A" : `${(d.fundingRate * 100).toFixed(4)}%`}</strong><span className="muted">BTC perpetual</span></Card>
+      </div>
+
+      <div className="btc-layout" style={{ marginTop: "14px" }}>
+        <Card className="chart-card">
+          <div className="card-head"><div><span className="label">PRICE STRUCTURE</span><h2>BTC / USDT</h2></div><span className="muted">15m + 1h context</span></div>
+          <CoinChart symbol="BTCUSDT" />
+          <div className="report-grid" style={{ marginTop: "14px" }}>
+            <div><span className="label">15M</span><h2>{d ? formatPct(d.change15m) : "—"}</h2></div>
+            <div><span className="label">1H</span><h2>{d ? formatPct(d.change1h) : "—"}</h2></div>
+            <div><span className="label">7D</span><h2>{d ? formatPct(d.change7d) : "—"}</h2></div>
           </div>
-        </div>
-        <div className="btc-r-actions">
-          <button className="btc-mini-btn" type="button" onClick={() => onCoinClick("BTCUSDT")}><ChevronRight size={14} /> Chart</button>
-          <button className="btc-mini-btn" type="button" onClick={() => load(true)} disabled={refreshing}><RefreshCw size={14} /> {refreshing ? "Refreshing" : "Refresh"}</button>
-        </div>
-      </div>
+        </Card>
 
-      {error && <div className="btc-panel" style={{ padding: "10px 12px", color: "#ff7180", marginBottom: 9 }}>{error}</div>}
-
-      <div className="btc-top-stats">
-        <div className="btc-top-card"><div className="k">MARKET CAP</div><div className="v">N/A</div><div className="s btc-muted">Verified supply data unavailable</div></div>
-        <div className="btc-top-card"><div className="k">24h VOLUME</div><div className="v">{d ? formatCompactUsd(d.volume24h) : "—"}</div><div className={d && d.volume24h > 0 ? "s btc-green" : "s btc-muted"}>Spot market volume</div></div>
-        <div className="btc-top-card"><div className="k">DOMINANCE</div><div className="v">N/A</div><div className="s btc-muted">Verified global dominance unavailable</div></div>
-        <div className="btc-top-card"><div className="k">OPEN INTEREST</div><div className="v">{d?.openInterestUsd == null ? "N/A" : formatCompactUsd(d.openInterestUsd)}</div><div className={d?.openInterestUsd != null ? "s btc-yellow" : "s btc-muted"}>BTC futures</div></div>
-      </div>
-
-      <div className="btc-main-grid">
-        <div className="btc-panel">
-          <div className="btc-panel-head"><div><div className="btc-section-title"><span className="accent">↗</span> PRICE ACTION <span className="btc-sub">(Live)</span></div><div className="btc-sub">BTC / USDT</div></div><div className="btc-tf">{["1m","5m","15m","1h","4h","1d"].map(tf=><button key={tf} type="button" className={chartTf===tf?"active":""} onClick={()=>setChartTf(tf)}>{tf}</button>)}</div></div>
-          <div className="btc-chart"><div className="btc-chart-surface"><CoinChart symbol="BTCUSDT" /></div></div>
-          <div className="btc-chart-footer"><div className="btc-foot"><div className="k">15M</div><div className={(d?.change15m ?? 0)>=0?"v btc-green":"v btc-red"}>{d ? formatPct(d.change15m) : "—"}</div></div><div className="btc-foot"><div className="k">1H</div><div className={(d?.change1h ?? 0)>=0?"v btc-green":"v btc-red"}>{d ? formatPct(d.change1h) : "—"}</div></div><div className="btc-foot"><div className="k">7D</div><div className={(d?.change7d ?? 0)>=0?"v btc-green":"v btc-red"}>{d ? formatPct(d.change7d) : "—"}</div></div></div>
-        </div>
-
-        <div className="btc-panel">
-          <div className="btc-panel-head"><div className="btc-section-title"><span className="accent btc-yellow">⚠</span> CURRENT MARKET READ</div><div className="btc-sub">Derived from latest verified data</div></div>
-          <div className="btc-read">
-            <div className="btc-read-hero"><div className={`btc-read-state ${cautionTone}`}>{d ? d.marketCondition.toUpperCase() : "LOADING"}<span>{structureText.toUpperCase()}</span></div><div className="btc-read-copy">{marketRead}</div></div>
-            <div className="btc-level-strip"><div className="btc-level"><div className="k">KEY SUPPORT</div><div className="v btc-green">{d ? `$${formatPrice(d.support)}` : "—"}</div></div><div className="btc-level"><div className="k">KEY RESISTANCE</div><div className="v btc-red">{d ? `$${formatPrice(d.resistance)}` : "—"}</div></div></div>
-            <div className="btc-structure"><div className="box"><span className="btc-muted">Structure</span><b className={cautionTone === "green" ? "btc-green" : cautionTone === "red" ? "btc-red" : "btc-yellow"}>{structureText}</b></div><div className="box"><span className="btc-muted">Simple Read</span><b>{d ? (d.marketCondition === "Bullish" ? "Momentum favorable above support." : d.marketCondition === "Bearish" ? "Risk rises below support." : "Neutral until resistance breaks.") : "Loading…"}</b></div></div>
+        <Card>
+          <span className="label">KEY LEVELS</span>
+          <div className="level-list">
+            <div><span>Support</span><b className="mono">{d ? `$${formatPrice(d.support)}` : "—"}</b></div>
+            <div><span>Resistance</span><b className="mono">{d ? `$${formatPrice(d.resistance)}` : "—"}</b></div>
+            <div><span>EMA 21</span><b className="mono">{d?.ema21 === null ? "N/A" : d ? `$${formatPrice(d.ema21)}` : "—"}</b></div>
+            <div><span>EMA 50</span><b className="mono">{d?.ema50 === null ? "N/A" : d ? `$${formatPrice(d.ema50)}` : "—"}</b></div>
+            <div><span>RSI 14</span><b className="mono">{fmtMetric(d?.rsi ?? null, 1)}</b></div>
+            <div><span>ATR</span><b className="mono">{fmtMetric(d?.atrPercent ?? null, 2, "%")}</b></div>
           </div>
-        </div>
-
-        <div className="btc-panel">
-          <div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◉</span> MARKET CYCLE SCORE <span className="btc-sub">(Analytical)</span></div><div className="btc-r-price">{d ? `${d.cycleScore}/100` : "—"}</div></div>
-          <div className="btc-gauge"><div className="btc-gauge-wrap"><div className="btc-gauge-ring"/><div className="btc-gauge-needle" style={{transform:`translateX(-50%) rotate(${gaugeDeg}deg)`}}/><div className="btc-gauge-center"><div className="n">{d ? Math.round(cycle10) : "—"}</div><div className="s">/ 10</div></div></div><div className="btc-stage">Cycle Stage <b>{d ? d.cycleStage : "Loading"}</b></div><div className="btc-cycle-legend"><span>Accumulation</span><span>Markup</span><span>Distribution</span><span>Markdown</span></div></div>
-        </div>
+        </Card>
       </div>
 
-      <div className="btc-panel btc-signal-panel">
-        <div className="btc-panel-head"><div className="btc-section-title"><span className="accent">▤</span> SIGNAL TABLE <span className="btc-sub">(Based on latest verified data)</span></div></div>
-        <div className="btc-table-wrap"><table className="btc-signal-table"><thead><tr><th>#</th><th>Signal</th><th>What to Watch</th><th>Current Read (Latest)</th><th>Status</th></tr></thead><tbody>{signalRows.map((row,i)=><tr key={row[0]}><td>{i+1}</td><td><b>{row[0]}</b></td><td className="btc-muted">{row[1]}</td><td>{row[2]}</td><td><span className="btc-status-dot"><i className={row[3]==="Green"?"dot-green":row[3]==="Yellow"?"dot-yellow":row[3]==="Red"?"dot-red":"dot-na"}/>{row[3]}</span></td></tr>)}</tbody></table></div>
+      <div className="stats-grid" style={{ marginTop: "14px" }}>
+        <Card><span className="label">OPEN INTEREST</span><strong>{d?.openInterestUsd === null ? "N/A" : d ? formatCompactUsd(d.openInterestUsd) : "—"}</strong><span className="muted">Current BTC futures OI</span></Card>
+        <Card><span className="label">LONG LIQUIDATIONS</span><strong>{d?.longLiquidationUsd === null ? "N/A" : d ? formatCompactUsd(d.longLiquidationUsd) : "—"}</strong><span className="muted">Recent force orders</span></Card>
+        <Card><span className="label">SHORT LIQUIDATIONS</span><strong>{d?.shortLiquidationUsd === null ? "N/A" : d ? formatCompactUsd(d.shortLiquidationUsd) : "—"}</strong><span className="muted">Recent force orders</span></Card>
+        <Card><span className="label">ETF NET FLOW</span><strong>{d?.etfFlow === null ? "N/A" : d ? `${d.etfFlow >= 0 ? "+" : ""}$${d.etfFlow.toFixed(1)}M` : "—"}</strong><span className="muted">Latest published day</span></Card>
       </div>
 
-      <div className="btc-bottom-grid">
-        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">▥</span> ETF / DERIVATIVES SNAPSHOT</div></div><div className="btc-metric-grid"><div className="btc-metric"><div className="k">US SPOT BTC ETF FLOWS</div><div className={d?.etfFlow == null ? "v btc-muted" : d.etfFlow >= 0 ? "v btc-green" : "v btc-red"}>{d?.etfFlow == null ? "N/A" : `${d.etfFlow >= 0?"+":""}$${d.etfFlow.toFixed(1)}M`}</div></div><div className="btc-metric"><div className="k">BTC SPOT VOLUME (24h)</div><div className="v btc-blue">{d ? formatCompactUsd(d.volume24h) : "—"}</div><div className="btc-mini-bars blue">{[25,38,27,44,34,51,48,64].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div></div><div className="btc-metric"><div className="k">BTC FUTURES OPEN INTEREST</div><div className="v btc-yellow">{d?.openInterestUsd == null ? "N/A" : formatCompactUsd(d.openInterestUsd)}</div><div className="btc-mini-bars yellow">{[28,35,30,41,38,52,49,67].map((h,i)=><i key={i} style={{height:`${h}%`}}/>)}</div></div><div className="btc-metric"><div className="k">FUNDING RATE</div><div className={d?.fundingRate == null ? "v btc-muted" : d.fundingRate >= 0 ? "v btc-green" : "v btc-red"}>{d?.fundingRate == null ? "N/A" : `${(d.fundingRate*100).toFixed(4)}%`}</div><div className="btc-muted" style={{fontSize:9,marginTop:4}}>BTC perpetual</div></div></div></div>
-        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◫</span> KEY TAKEAWAYS</div></div><div className="btc-takeaways"><ul className="btc-list"><li><span className="btc-green">●</span><span>BTC is {d ? d.marketCondition.toLowerCase() : "loading"} with price near <b>{d ? `$${formatPrice(d.price)}` : "—"}</b>.</span></li><li><span className="btc-yellow">●</span><span>Price is {d ? (d.price < d.resistance ? "below" : "above") : "near"} the current resistance zone.</span></li><li><span className="btc-yellow">●</span><span>Cycle stage is <b>{d?.cycleStage || "Loading"}</b> with a score of <b>{d ? d.cycleScore : "—"}/100</b>.</span></li><li><span className="btc-muted">●</span><span>Funding, MVRV/NUPL or ETF flow may be <b>N/A</b> when latest verified public data is unavailable.</span></li></ul></div></div>
+      <div className="two-col" style={{ marginTop: "14px" }}>
+        <Card>
+          <div className="card-head"><div><span className="label">ON-CHAIN</span><h2>MVRV / NUPL</h2></div><span className="muted">Live where public data is available</span></div>
+          <div className="report-grid">
+            <div><span className="label">MVRV</span><h2>{fmtMetric(d?.mvrv ?? null, 2)}</h2></div>
+            <div><span className="label">NUPL</span><h2>{fmtMetric(d?.nupl ?? null, 3)}</h2></div>
+            <div><span className="label">24H RANGE</span><h2>{d ? `$${formatPrice(d.low24h)} — $${formatPrice(d.high24h)}` : "—"}</h2></div>
+          </div>
+        </Card>
+        <Card>
+          <span className="label">KEY TAKEAWAYS</span>
+          {d ? <div style={{ display: "grid", gap: "8px", marginTop: "8px" }}>
+            <p className="muted" style={{ margin: 0 }}>• Market condition: <b>{d.marketCondition}</b> with health score <b>{d.marketHealth}/100</b>.</p>
+            <p className="muted" style={{ margin: 0 }}>• 15m {formatPct(d.change15m)} · 1h {formatPct(d.change1h)} · 7d {formatPct(d.change7d)}.</p>
+            <p className="muted" style={{ margin: 0 }}>• Key range: support <b>${formatPrice(d.support)}</b> / resistance <b>${formatPrice(d.resistance)}</b>.</p>
+            <p className="muted" style={{ margin: 0 }}>• Cycle stage: <b>{d.cycleStage}</b> (technical proxy, not a guaranteed market-cycle label).</p>
+          </div> : <p className="muted">Loading report…</p>}
+        </Card>
       </div>
-
-      <div className="btc-bottom-grid">
-        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent btc-yellow">●</span> TOP ALERT RULES</div></div><div className="btc-alerts"><div className="btc-rule green"><span className="btc-rule-dot"/><span><b>GREEN (Healthy):</b> Price holds support and market health remains above 70.</span></div><div className="btc-rule yellow"><span className="btc-rule-dot"/><span><b>YELLOW (Caution):</b> Sideways structure, elevated leverage or resistance nearby.</span></div><div className="btc-rule red"><span className="btc-rule-dot"/><span><b>RED (Risk):</b> Price loses support or market health falls below 45.</span></div></div></div>
-        <div className="btc-panel"><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">▤</span> MARKET CONDITION STATEMENT</div><div className="btc-sub">Last updated {d ? new Date(d.updatedAt).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "—"}</div></div><div className="btc-statement"><div className="btc-statement-text">{d ? `BTC remains in a ${d.marketCondition.toLowerCase()} state. Price is ${d.price < d.resistance ? "below" : "above"} the current resistance area, while the key support sits near $${formatPrice(d.support)}. ${d.fundingRate == null ? "Funding data is unavailable from the latest verified endpoint." : `Funding is ${(d.fundingRate*100).toFixed(4)}%, providing a live derivatives sentiment read.`}` : "Loading statement…"}</div></div></div>
-      </div>
-
-      <div className="btc-panel" style={{marginTop:9}}><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◌</span> CYCLE MAP <span className="btc-sub">(Analytical)</span></div></div><div className="btc-cycle-map">{["Accumulation","Markup","Distribution","Markdown"].map((name,idx)=>{const active = d ? (d.cycleStage.includes("Accumulation")?idx===0:d.cycleStage.includes("Markup")?idx===1:d.cycleStage.includes("Distribution")?idx===2:idx===3) : false; return <div key={name} className={`btc-cycle-node ${active?"active":""}`}><div className="icon">{["◉","↗","◌","↘"][idx]}</div><div className="lbl">{name}</div></div>})}</div></div>
-
-      <div className="btc-panel" style={{marginTop:9}}><div className="btc-panel-head"><div className="btc-section-title"><span className="accent">◎</span> KEY LEVELS TO WATCH <span className="btc-sub">(Analysis)</span></div></div><div className="btc-watch"><div className="btc-watch-row"><span>Resistance 2</span><b className="btc-red">{d ? `$${formatPrice(d.resistance * 1.03)}` : "—"}</b></div><div className="btc-watch-row"><span>Resistance 1</span><b className="btc-red">{d ? `$${formatPrice(d.resistance)}` : "—"}</b></div><div className="btc-watch-row"><span>Support 1</span><b className="btc-green">{d ? `$${formatPrice(d.support)}` : "—"}</b></div><div className="btc-watch-row"><span>Support 2</span><b className="btc-green">{d ? `$${formatPrice(d.support * 0.97)}` : "—"}</b></div><div className="btc-watch-row"><span>EMA 21 / 50</span><b>{d?.ema21 == null || d?.ema50 == null ? "N/A" : `$${formatPrice(d.ema21)} / $${formatPrice(d.ema50)}`}</b></div></div></div>
-
-      {sourceNote && <div className="btc-sub" style={{ marginTop: 7 }}>{sourceNote}</div>}
     </div>
   );
 }
@@ -2227,8 +2387,6 @@ function Portfolio({ user }: { user: User }) {
     notes: string;
     createdAt: string;
   };
-
-  type PortfolioTab = "Overview" | "Holdings" | "Performance" | "History" | "Notes";
 
   const [holdings, setHoldings] = useState<Holding[]>(() => {
     const raw = user.user_metadata?.predator_portfolio;
@@ -2246,10 +2404,6 @@ function Portfolio({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const [activeTab, setActiveTab] = useState<PortfolioTab>("Overview");
-  const [showForm, setShowForm] = useState(false);
-  const [currencyOpen, setCurrencyOpen] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -2293,7 +2447,6 @@ function Portfolio({ user }: { user: User }) {
       }
       setPrices(next);
       setMarketSymbols([...symbols].sort());
-      setLastUpdated(new Date());
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not refresh prices");
     } finally {
@@ -2315,25 +2468,11 @@ function Portfolio({ user }: { user: User }) {
   };
 
   const resetForm = () => {
-    setEditingId(null);
-    setSymbol("BTCUSDT");
-    setQuantity(0);
-    setEntryPrice(0);
-    setInvested(0);
-    setPlan("Scalp");
-    setNotes("");
+    setEditingId(null); setSymbol("BTCUSDT"); setQuantity(0); setEntryPrice(0); setInvested(0); setPlan("Scalp"); setNotes("");
   };
 
   const startEdit = (h: Holding) => {
-    setEditingId(h.id);
-    setSymbol(h.symbol);
-    setQuantity(h.quantity);
-    setEntryPrice(h.entryPrice);
-    setInvested(h.invested);
-    setPlan(h.plan);
-    setNotes(h.notes);
-    setShowForm(true);
-    setActiveTab("Holdings");
+    setEditingId(h.id); setSymbol(h.symbol); setQuantity(h.quantity); setEntryPrice(h.entryPrice); setInvested(h.invested); setPlan(h.plan); setNotes(h.notes);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -2355,36 +2494,24 @@ function Portfolio({ user }: { user: User }) {
       createdAt: editingId ? (holdings.find((h) => h.id === editingId)?.createdAt || new Date().toISOString()) : new Date().toISOString(),
     };
     const next = editingId ? holdings.map((h) => h.id === editingId ? item : h) : [item, ...holdings];
-    setSaving(true);
-    setMessage("");
+    setSaving(true); setMessage("");
     try {
       await saveToSupabase(next);
       setHoldings(next);
       setMessage(editingId ? "Position updated." : "Position saved.");
       resetForm();
-      setShowForm(false);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Could not save position");
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   const deleteHolding = async (id: string) => {
     if (!window.confirm("Delete this portfolio position?")) return;
     const next = holdings.filter((h) => h.id !== id);
-    setSaving(true);
-    setMessage("");
-    try {
-      await saveToSupabase(next);
-      setHoldings(next);
-      setMessage("Position deleted.");
-      if (editingId === id) resetForm();
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not delete position");
-    } finally {
-      setSaving(false);
-    }
+    setSaving(true); setMessage("");
+    try { await saveToSupabase(next); setHoldings(next); setMessage("Position deleted."); if (editingId === id) resetForm(); }
+    catch (err) { setMessage(err instanceof Error ? err.message : "Could not delete position"); }
+    finally { setSaving(false); }
   };
 
   const calcInvestment = () => setInvested(quantity * entryPrice);
@@ -2396,167 +2523,45 @@ function Portfolio({ user }: { user: User }) {
   const pnl = currentTotal - investedTotal;
   const pnlPct = investedTotal > 0 ? pnl / investedTotal * 100 : 0;
 
-  const rows = useMemo(() => holdings.map((h) => {
-    const current = prices[h.symbol] || h.entryPrice;
-    const value = h.quantity * current;
-    const hpnl = value - h.invested;
-    const hpnlPct = h.invested > 0 ? hpnl / h.invested * 100 : 0;
-    return { ...h, current, value, hpnl, hpnlPct };
-  }), [holdings, prices]);
-
-  const allocation = useMemo(() => rows
-    .map((r) => ({ symbol: r.symbol, value: r.value }))
-    .sort((a, b) => b.value - a.value), [rows]);
-
-  const maxAbsPnl = Math.max(1, ...rows.map((r) => Math.abs(r.hpnl)));
-  const topPnL = [...rows].sort((a, b) => Math.abs(b.hpnl) - Math.abs(a.hpnl)).slice(0, 7);
-
-  const avatarFor = (sym: string) => sym.replace("USDT", "").slice(0, 3).toUpperCase();
-  const formatMoney = (value: number) => `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const formatQty = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 8 });
-
-  const allocationTotal = Math.max(currentTotal, 1);
-  const allocationStops = allocation.map((item, i) => {
-    const start = allocation.slice(0, i).reduce((sum, a) => sum + a.value, 0) / allocationTotal * 100;
-    const end = (start + item.value / allocationTotal * 100);
-    return `${i % 4 === 0 ? "#13c8ff" : i % 4 === 1 ? "#7b61ff" : i % 4 === 2 ? "#11d7a0" : "#f5bb1f"} ${start}% ${end}%`;
-  }).slice(0, 6);
-
-  const chartPoints = useMemo(() => {
-    const base = Math.max(1, investedTotal);
-    const bars = 18;
-    return Array.from({ length: bars }, (_, i) => {
-      const phase = i / (bars - 1);
-      const drift = 0.75 + phase * 0.23 + Math.sin(i * 1.15) * 0.045 + Math.cos(i * 0.52) * 0.025;
-      return Math.max(0.55, base * drift);
-    });
-  }, [investedTotal]);
-
-  const chartMax = Math.max(...chartPoints, 1);
-  const chartMin = Math.min(...chartPoints, chartMax - 1);
-  const chartPath = chartPoints.map((v, i) => {
-    const x = 8 + (i / (chartPoints.length - 1)) * 92;
-    const y = 92 - ((v - chartMin) / Math.max(1, chartMax - chartMin)) * 68;
-    return `${i === 0 ? "M" : "L"} ${x} ${y}`;
-  }).join(" ");
-  const chartArea = `${chartPath} L 100 96 L 8 96 Z`;
-
-  const form = (
-    <div className="pred-portfolio-form">
-      <div className="pred-form-head">
-        <div>
-          <div className="pred-eyebrow">{editingId ? "EDIT POSITION" : "ADD TRADE"}</div>
-          <h3>{editingId ? "Update holding" : "New holding"}</h3>
-        </div>
-        <button className="pred-icon-btn" onClick={() => { setShowForm(false); if (editingId) resetForm(); }} aria-label="Close">×</button>
-      </div>
-      <div className="pred-form-grid">
-        <label>Coin<input list="portfolio-coins" value={symbol.replace("USDT", "")} onChange={(e: ChangeEvent<HTMLInputElement>) => setSymbol(e.target.value)} placeholder="BTC" /><datalist id="portfolio-coins">{marketSymbols.map((s) => <option key={s} value={s.replace("USDT", "")} />)}</datalist></label>
-        <label>Quantity<input type="number" min="0" step="any" value={quantity || ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setQuantity(Number(e.target.value) || 0)} /></label>
-        <label>Avg. entry price<input type="number" min="0" step="any" value={entryPrice || ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setEntryPrice(Number(e.target.value) || 0)} /></label>
-        <label>Total invested<input type="number" min="0" step="any" value={invested || ""} onChange={(e: ChangeEvent<HTMLInputElement>) => setInvested(Number(e.target.value) || 0)} /></label>
-        <label>Plan<input value={plan} onChange={(e: ChangeEvent<HTMLInputElement>) => setPlan(e.target.value)} placeholder="Scalp / Swing / Long-term" /></label>
-        <label>Notes<input value={notes} onChange={(e: ChangeEvent<HTMLInputElement>) => setNotes(e.target.value)} placeholder="Why / thesis / risk" /></label>
-      </div>
-      <div className="pred-form-actions">
-        <button className="pred-secondary" type="button" onClick={calcInvestment}>Auto investment</button>
-        <button className="pred-secondary" type="button" onClick={calcQuantity}>Auto quantity</button>
-        <button className="pred-secondary" type="button" onClick={calcEntry}>Auto entry</button>
-        <button className="pred-primary" type="button" onClick={saveHolding} disabled={saving}>{saving ? "Saving..." : editingId ? "Update position" : "Add trade"}</button>
-      </div>
-      {message && <div className="pred-inline-message">{message}</div>}
-    </div>
-  );
-
   return (
-    <div className="pred-portfolio-page">
-      <style>{`
-        .pred-portfolio-page{--p-bg:#030a11;--p-panel:rgba(6,18,29,.78);--p-panel2:rgba(7,23,37,.86);--p-border:rgba(94,157,210,.22);--p-text:#eaf4ff;--p-muted:#8ea5ba;--p-cyan:#48d7ff;--p-green:#12e4a1;--p-red:#ff556d;--p-blue:#4baeff;max-width:1500px;margin:0 auto;padding:22px 0 36px;color:var(--p-text)}
-        .pred-portfolio-page *{box-sizing:border-box}.pred-portfolio-page button,.pred-portfolio-page input{font:inherit}.pred-portfolio-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:18px}.pred-portfolio-brand{display:flex;align-items:center;gap:15px}.pred-portfolio-mark{width:58px;height:58px;border-radius:17px;display:grid;place-items:center;background:linear-gradient(145deg,rgba(17,222,204,.24),rgba(29,100,188,.13));border:1px solid rgba(73,210,255,.18);box-shadow:inset 0 0 28px rgba(17,219,202,.08)}.pred-portfolio-title{margin:0;font-size:31px;letter-spacing:-.04em}.pred-portfolio-sub{margin:3px 0 0;color:var(--p-muted);font-size:14px}.pred-portfolio-actions{display:flex;align-items:center;gap:10px}.pred-currency{position:relative}.pred-currency-btn{min-width:150px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:12px 15px;border-radius:11px;border:1px solid var(--p-border);background:rgba(8,20,32,.8);color:var(--p-text);cursor:pointer}.pred-currency-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:10;min-width:150px;padding:6px;border:1px solid var(--p-border);border-radius:11px;background:#07111b;box-shadow:0 20px 50px rgba(0,0,0,.4)}.pred-currency-menu button{display:block;width:100%;padding:9px 10px;text-align:left;border:0;border-radius:7px;background:transparent;color:var(--p-text);cursor:pointer}.pred-currency-menu button:hover{background:rgba(72,215,255,.09)}.pred-last{color:var(--p-muted);font-size:12px;white-space:nowrap;text-align:right}.pred-refresh{width:42px;height:42px;border-radius:11px;border:1px solid var(--p-border);background:rgba(8,20,32,.8);color:var(--p-cyan);display:grid;place-items:center;cursor:pointer}.pred-refresh:disabled{opacity:.5;cursor:not-allowed}
-        .pred-tabs{display:flex;gap:0;align-items:center;margin-bottom:18px;border:1px solid var(--p-border);background:rgba(8,20,32,.62);border-radius:12px;overflow:hidden;max-width:680px}.pred-tab{flex:1;padding:12px 18px;background:transparent;border:0;border-right:1px solid rgba(94,157,210,.12);color:#9fb3c7;cursor:pointer}.pred-tab:last-child{border-right:0}.pred-tab.active{color:#eaf8ff;background:linear-gradient(180deg,rgba(34,128,186,.33),rgba(24,95,141,.16));box-shadow:inset 0 -1px 0 rgba(72,215,255,.38)}
-        .pred-stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.pred-stat{min-height:102px;padding:16px 18px;border:1px solid var(--p-border);border-radius:13px;background:linear-gradient(180deg,rgba(9,26,40,.78),rgba(4,14,23,.82));box-shadow:inset 0 0 22px rgba(50,190,255,.025)}.pred-stat.green{border-color:rgba(18,228,161,.28);box-shadow:inset 0 0 24px rgba(18,228,161,.045)}.pred-stat.blue{border-color:rgba(66,173,255,.3)}.pred-stat-label{color:#9ab1c5;font-size:12px;margin-bottom:10px}.pred-stat-value{font-size:25px;font-weight:800;letter-spacing:-.03em}.pred-stat-note{margin-top:8px;color:var(--p-muted);font-size:12px}.pred-up{color:var(--p-green)}.pred-down{color:var(--p-red)}
-        .pred-main-grid{display:grid;grid-template-columns:1.55fr 1.15fr 1.15fr;gap:12px;margin-top:14px}.pred-panel{border:1px solid var(--p-border);border-radius:13px;background:linear-gradient(180deg,rgba(7,22,35,.77),rgba(3,12,20,.9));overflow:hidden}.pred-panel-head{display:flex;align-items:center;justify-content:space-between;padding:15px 16px 8px}.pred-panel-title{font-size:16px;font-weight:700}.pred-range{display:flex;gap:5px}.pred-range button{padding:7px 10px;border-radius:7px;border:1px solid rgba(94,157,210,.14);background:rgba(8,20,32,.6);color:#90a7bb;cursor:pointer}.pred-range button.active{color:#fff;border-color:rgba(72,215,255,.6);background:rgba(29,130,189,.18)}.pred-chart-wrap{padding:5px 12px 13px}.pred-chart{width:100%;height:200px;display:block}.pred-chart-grid{stroke:rgba(122,165,196,.08);stroke-width:.35}.pred-chart-line{fill:none;stroke:var(--p-green);stroke-width:1.25}.pred-chart-fill{fill:url(#predPortfolioFill)}.pred-chart-labels{display:flex;justify-content:space-between;padding:0 12px 12px;color:#6f879e;font-size:10px}.pred-donut-wrap{padding:6px 16px 15px;display:grid;grid-template-columns:150px 1fr;align-items:center;gap:18px}.pred-donut{width:150px;height:150px;border-radius:50%;position:relative;background:conic-gradient(${allocationStops.length?allocationStops.join(","):"#243c51 0 100%"})}.pred-donut:after{content:"";position:absolute;inset:31px;border-radius:50%;background:#07131f;border:1px solid rgba(93,154,202,.12)}.pred-donut-center{position:absolute;inset:0;display:grid;place-items:center;text-align:center;z-index:1}.pred-donut-value{font-size:20px;font-weight:800}.pred-donut-sub{font-size:11px;color:#839db1;margin-top:-42px}.pred-legend{display:flex;flex-direction:column;gap:10px;max-height:160px;overflow:auto}.pred-legend-row{display:flex;align-items:center;gap:8px;font-size:13px}.pred-dot{width:9px;height:9px;border-radius:50%}.pred-legend-row span:last-child{margin-left:auto;color:#a8bacb}.pred-pnl-list{padding:5px 15px 14px;display:flex;flex-direction:column;gap:10px}.pred-pnl-row{display:grid;grid-template-columns:78px 1fr auto;gap:10px;align-items:center;font-size:12px}.pred-pnl-name{display:flex;align-items:center;gap:7px}.pred-pnl-bar{height:10px;border-radius:999px;background:#081522;overflow:hidden;border:1px solid rgba(95,159,207,.1)}.pred-pnl-fill{height:100%;border-radius:999px}.pred-pnl-fill.up{background:linear-gradient(90deg,#0ed497,#18b8c6)}.pred-pnl-fill.down{background:linear-gradient(90deg,#ff526a,#cc354f)}.pred-pnl-value{white-space:nowrap;font-weight:700}.pred-pnl-value.up{color:var(--p-green)}.pred-pnl-value.down{color:var(--p-red)}
-        .pred-holdings-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:16px 0 10px}.pred-holdings-title{font-size:20px;font-weight:800}.pred-holdings-tools{display:flex;align-items:center;gap:8px}.pred-search{min-width:220px;padding:11px 12px;border-radius:10px;border:1px solid var(--p-border);background:rgba(7,18,29,.7);color:var(--p-text);outline:none}.pred-search:focus{border-color:rgba(72,215,255,.5)}.pred-add{padding:11px 16px;border-radius:10px;border:1px solid rgba(18,228,161,.42);background:linear-gradient(180deg,rgba(17,195,151,.33),rgba(11,114,94,.24));color:#dffff5;font-weight:800;cursor:pointer}.pred-add:hover{filter:brightness(1.08)}
-        .pred-table-panel{overflow:hidden}.pred-table-wrap{overflow:auto}.pred-table{width:100%;border-collapse:collapse;min-width:1050px}.pred-table th,.pred-table td{padding:12px 10px;border-bottom:1px solid rgba(95,158,206,.1);text-align:left;white-space:nowrap}.pred-table th{color:#7790a5;font-size:11px;text-transform:uppercase;letter-spacing:.08em;background:rgba(8,22,34,.72);position:sticky;top:0;z-index:1}.pred-table td{font-size:13px;color:#dfeaf4}.pred-coin{display:flex;align-items:center;gap:9px}.pred-coin-badge{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:900;background:radial-gradient(circle at 30% 25%,#f5fbff,#577289 42%,#162b3a 100%);color:#0d1822;border:1px solid rgba(255,255,255,.17)}.pred-symbol{font-weight:800}.pred-symbol-sub{display:block;color:#6f879b;font-size:10px;margin-top:2px}.pred-plan{display:inline-flex;padding:6px 9px;border-radius:7px;border:1px solid rgba(72,215,255,.22);background:rgba(26,107,150,.12);color:#a8d6ef;font-size:11px;font-weight:800}.pred-note{max-width:160px;overflow:hidden;text-overflow:ellipsis;color:#8ba1b4}.pred-action{display:flex;gap:6px}.pred-row-btn{padding:7px 9px;border-radius:7px;border:1px solid rgba(92,157,205,.16);background:rgba(9,23,35,.8);color:#9ec4df;cursor:pointer}.pred-row-btn.danger{color:#ff8192;border-color:rgba(255,85,109,.18)}
-        .pred-form{margin-top:14px}.pred-portfolio-form{border:1px solid rgba(72,215,255,.22);border-radius:13px;background:linear-gradient(180deg,rgba(8,26,42,.95),rgba(3,13,23,.97));padding:16px}.pred-form-head{display:flex;align-items:flex-start;justify-content:space-between}.pred-eyebrow{font-size:10px;color:#7f98ad;letter-spacing:.08em}.pred-form-head h3{margin:5px 0 0;font-size:17px}.pred-icon-btn{width:32px;height:32px;border-radius:8px;border:1px solid rgba(94,157,210,.18);background:rgba(8,21,32,.7);color:#93a9bb;cursor:pointer;font-size:18px}.pred-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:14px}.pred-form-grid label{display:flex;flex-direction:column;gap:6px;color:#8fa7bb;font-size:11px}.pred-form-grid input{padding:11px 12px;border-radius:9px;border:1px solid rgba(94,157,210,.18);background:#071521;color:#e8f4ff;outline:none}.pred-form-grid input:focus{border-color:rgba(72,215,255,.48)}.pred-form-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.pred-primary,.pred-secondary{padding:10px 13px;border-radius:9px;cursor:pointer}.pred-primary{border:1px solid rgba(18,228,161,.4);background:linear-gradient(180deg,rgba(18,228,161,.25),rgba(9,113,86,.22));color:#e2fff7;font-weight:800}.pred-secondary{border:1px solid rgba(94,157,210,.17);background:rgba(9,23,35,.75);color:#9eb5c8}.pred-inline-message{margin-top:9px;color:#9ac0d8;font-size:12px}
-        .pred-empty{padding:32px;color:#7890a4;text-align:center}.pred-view{margin-top:14px}.pred-mini-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.pred-mini{padding:16px;border:1px solid var(--p-border);border-radius:12px;background:rgba(7,21,33,.76)}.pred-mini-title{font-size:12px;color:#8fa7bc}.pred-mini-value{font-size:21px;font-weight:800;margin-top:7px}.pred-note-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px}.pred-note-card{padding:15px;border:1px solid var(--p-border);border-radius:12px;background:rgba(7,21,33,.76)}.pred-note-card strong{display:block;margin-bottom:8px}.pred-note-card p{margin:0;color:#8aa0b4;font-size:13px;line-height:1.5}
-        @media (max-width:1100px){.pred-stat-grid{grid-template-columns:repeat(2,1fr)}.pred-main-grid{grid-template-columns:1fr}.pred-form-grid{grid-template-columns:repeat(2,1fr)}}
-        @media (max-width:760px){.pred-portfolio-page{padding:14px}.pred-portfolio-head{align-items:flex-start;flex-direction:column}.pred-portfolio-actions{width:100%;flex-wrap:wrap}.pred-stat-grid{grid-template-columns:1fr 1fr}.pred-tabs{max-width:none;overflow:auto}.pred-tab{min-width:110px}.pred-donut-wrap{grid-template-columns:1fr}.pred-holdings-head{align-items:flex-start;flex-direction:column}.pred-holdings-tools{width:100%;flex-wrap:wrap}.pred-search{min-width:0;flex:1;width:100%}.pred-form-grid{grid-template-columns:1fr}.pred-mini-grid,.pred-note-grid{grid-template-columns:1fr}.pred-last{text-align:left}}
-      `}</style>
+    <div className="page">
+      <div className="page-head"><div><p className="eyebrow">INVESTMENTS</p><h1>Portfolio</h1><p className="muted">Live USD portfolio with Supabase persistence.</p></div><button className="glass-btn" onClick={refreshPrices} disabled={loading}><RefreshCw size={14} /> {loading ? "Refreshing" : "Refresh prices"}</button></div>
 
-      <div className="pred-portfolio-head">
-        <div className="pred-portfolio-brand">
-          <div className="pred-portfolio-mark"><Wallet size={28} /></div>
-          <div><h1 className="pred-portfolio-title">Portfolio</h1><p className="pred-portfolio-sub">Track Your Investments</p></div>
-        </div>
-        <div className="pred-portfolio-actions">
-          <div className="pred-currency">
-            <button className="pred-currency-btn" onClick={() => setCurrencyOpen((v) => !v)}><span>USD ($)</span><ChevronRight size={16} style={{ transform: currencyOpen ? "rotate(90deg)" : "rotate(0deg)" }} /></button>
-            {currencyOpen && <div className="pred-currency-menu"><button onClick={() => setCurrencyOpen(false)}>USD ($)</button></div>}
-          </div>
-          <div className="pred-last">Last Update<br /><strong>{lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--"}</strong></div>
-          <button className="pred-refresh" title="Refresh prices" onClick={refreshPrices} disabled={loading}><RefreshCw size={19} /></button>
-        </div>
+      <div className="stats-grid">
+        <Card><span className="label">INVESTED</span><strong>${investedTotal.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</strong></Card>
+        <Card><span className="label">CURRENT VALUE</span><strong>${currentTotal.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</strong></Card>
+        <Card><span className="label">P&amp;L</span><strong className={pnl >= 0 ? "up" : "muted"}>{pnl >= 0 ? "+" : "-"}${Math.abs(pnl).toFixed(2)}</strong><span className="muted">{pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%</span></Card>
+        <Card><span className="label">COINS</span><strong>{holdings.length}</strong><span className="muted">Live priced</span></Card>
       </div>
 
-      <div className="pred-tabs">
-        {(["Overview", "Holdings", "Performance", "History", "Notes"] as PortfolioTab[]).map((tab) => (
-          <button key={tab} className={`pred-tab${activeTab === tab ? " active" : ""}`} onClick={() => setActiveTab(tab)}>{tab}</button>
-        ))}
-      </div>
-
-      {activeTab !== "Overview" && activeTab !== "Holdings" && (
-        <div className="pred-view">
-          {activeTab === "Performance" && <div className="pred-mini-grid"><div className="pred-mini"><div className="pred-mini-title">Total P&amp;L</div><div className={`pred-mini-value ${pnl >= 0 ? "pred-up" : "pred-down"}`}>{pnl >= 0 ? "+" : "-"}{formatMoney(Math.abs(pnl))}</div></div><div className="pred-mini"><div className="pred-mini-title">Return</div><div className={`pred-mini-value ${pnlPct >= 0 ? "pred-up" : "pred-down"}`}>{pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(2)}%</div></div><div className="pred-mini"><div className="pred-mini-title">Open Positions</div><div className="pred-mini-value">{holdings.length}</div></div></div>}
-          {activeTab === "History" && <div className="pred-panel pred-table-panel"><div className="pred-panel-head"><span className="pred-panel-title">Position History</span><span className="pred-last">Saved in your Supabase portfolio</span></div><div className="pred-table-wrap"><table className="pred-table"><thead><tr><th>COIN</th><th>DATE</th><th>INVESTED</th><th>PLAN</th></tr></thead><tbody>{[...holdings].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).map(h=><tr key={h.id}><td><span className="pred-symbol">{h.symbol.replace("USDT","")}</span></td><td>{new Date(h.createdAt).toLocaleString()}</td><td className="mono">{formatMoney(h.invested)}</td><td><span className="pred-plan">{h.plan}</span></td></tr>)}</tbody></table></div></div>}
-          {activeTab === "Notes" && <div className="pred-note-grid">{holdings.filter(h=>h.notes).map(h=><div key={h.id} className="pred-note-card"><strong>{h.symbol.replace("USDT","")}</strong><p>{h.notes}</p></div>)}{holdings.filter(h=>h.notes).length === 0 && <div className="pred-note-card"><strong>No notes yet</strong><p>Add notes to your positions and they will appear here.</p></div>}</div>}
+      <Card style={{ marginTop: "14px" }}>
+        <div className="card-head"><div><span className="label">{editingId ? "EDIT POSITION" : "ADD POSITION"}</span><h2>{editingId ? "Update holding" : "New holding"}</h2></div></div>
+        <div className="form-grid">
+          <label>Coin<input list="portfolio-coins" value={symbol.replace("USDT","")} onChange={(e: ChangeEvent<HTMLInputElement>)=>setSymbol(e.target.value)} placeholder="BTC" /><datalist id="portfolio-coins">{marketSymbols.map((s)=><option key={s} value={s.replace("USDT","")} />)}</datalist></label>
+          <label>Quantity<input type="number" min="0" step="any" value={quantity || ""} onChange={(e: ChangeEvent<HTMLInputElement>)=>setQuantity(Number(e.target.value)||0)} /></label>
+          <label>Entry price <span className="muted">USD</span><input type="number" min="0" step="any" value={entryPrice || ""} onChange={(e: ChangeEvent<HTMLInputElement>)=>setEntryPrice(Number(e.target.value)||0)} /></label>
+          <label>Total investment <span className="muted">USD</span><input type="number" min="0" step="any" value={invested || ""} onChange={(e: ChangeEvent<HTMLInputElement>)=>setInvested(Number(e.target.value)||0)} /></label>
+          <label>Plan<input value={plan} onChange={(e: ChangeEvent<HTMLInputElement>)=>setPlan(e.target.value)} placeholder="Scalp / Swing / Long-term" /></label>
+          <label>Notes<input value={notes} onChange={(e: ChangeEvent<HTMLInputElement>)=>setNotes(e.target.value)} placeholder="Why / thesis / risk" /></label>
         </div>
-      )}
-
-      {(activeTab === "Overview" || activeTab === "Holdings") && <>
-        <div className="pred-stat-grid">
-          <div className="pred-stat"><div className="pred-stat-label">TOTAL INVESTED</div><div className="pred-stat-value">{formatMoney(investedTotal)}</div></div>
-          <div className="pred-stat green"><div className="pred-stat-label">CURRENT VALUE</div><div className="pred-stat-value">{formatMoney(currentTotal)} <span className={pnlPct >= 0 ? "pred-up" : "pred-down"} style={{ fontSize: 16 }}>{pnlPct >= 0 ? "↑" : "↓"} {Math.abs(pnlPct).toFixed(2)}%</span></div></div>
-          <div className="pred-stat green"><div className="pred-stat-label">TOTAL P&amp;L</div><div className="pred-stat-value pred-up">{pnl >= 0 ? "+" : "-"}{formatMoney(Math.abs(pnl))} <span className={pnlPct >= 0 ? "pred-up" : "pred-down"} style={{ fontSize: 16 }}>{pnlPct >= 0 ? "↑" : "↓"} {Math.abs(pnlPct).toFixed(2)}%</span></div></div>
-          <div className="pred-stat blue"><div className="pred-stat-label">TOTAL COINS</div><div className="pred-stat-value">{holdings.length}</div></div>
+        <div style={{ display:"flex", gap:"8px", flexWrap:"wrap", marginTop:"10px" }}>
+          <button className="chip" type="button" onClick={calcInvestment}>Auto-calc Investment</button>
+          <button className="chip" type="button" onClick={calcQuantity}>Auto-calc Quantity</button>
+          <button className="chip" type="button" onClick={calcEntry}>Auto-calc Entry</button>
+          <button className="glass-btn" type="button" onClick={saveHolding} disabled={saving}>{saving ? "Saving..." : editingId ? "Update position" : "Add position"}</button>
+          {editingId && <button className="chip" type="button" onClick={resetForm}>Cancel</button>}
         </div>
+        {message && <p className="muted" style={{ marginTop:"10px" }}>{message}</p>}
+      </Card>
 
-        {activeTab === "Overview" && <div className="pred-main-grid">
-          <div className="pred-panel">
-            <div className="pred-panel-head"><div className="pred-panel-title">Portfolio Chart</div><div className="pred-range">{["1D", "1W", "1M", "3M", "1Y", "ALL"].map((r) => <button key={r} className={r === "1M" ? "active" : ""}>{r}</button>)}</div></div>
-            <div className="pred-chart-wrap"><svg className="pred-chart" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><linearGradient id="predPortfolioFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#13d8a4" stopOpacity=".33"/><stop offset="100%" stopColor="#13d8a4" stopOpacity="0"/></linearGradient></defs>{[18,34,50,66,82].map(y=><line key={y} x1="8" y1={y} x2="98" y2={y} className="pred-chart-grid"/>)}<path d={chartArea} className="pred-chart-fill"/><path d={chartPath} className="pred-chart-line"/></svg></div>
-            <div className="pred-chart-labels"><span>Start</span><span>Recent</span><span>Current</span></div>
-          </div>
-
-          <div className="pred-panel">
-            <div className="pred-panel-head"><div className="pred-panel-title">Allocation</div><span className="pred-last">{formatMoney(currentTotal)}</span></div>
-            <div className="pred-donut-wrap">
-              <div className="pred-donut" style={{ background: allocationStops.length ? `conic-gradient(${allocationStops.join(",")})` : "conic-gradient(#243c51 0 100%)" }}><div className="pred-donut-center"><div><div className="pred-donut-value">{formatMoney(currentTotal).replace(".00","")}</div><div className="pred-donut-sub">Total Value</div></div></div></div>
-              <div className="pred-legend">{allocation.slice(0,6).map((a,i)=><div className="pred-legend-row" key={a.symbol}><span className="pred-dot" style={{ background: ["#13c8ff","#7b61ff","#11d7a0","#f5bb1f"][i%4] }} /> <span>{a.symbol.replace("USDT","")}</span><span>{(a.value / allocationTotal * 100).toFixed(1)}%</span></div>)}{allocation.length > 6 && <div className="pred-legend-row"><span className="pred-dot" style={{ background: "#6c7c8b" }} /><span>Others</span><span>{(allocation.slice(6).reduce((s,a)=>s+a.value,0)/allocationTotal*100).toFixed(1)}%</span></div>}</div>
-            </div>
-          </div>
-
-          <div className="pred-panel">
-            <div className="pred-panel-head"><div className="pred-panel-title">Live P&amp;L (By Coin)</div><span className="pred-last">PNL ($)</span></div>
-            <div className="pred-pnl-list">{topPnL.map((r)=>{const up=r.hpnl>=0;const width=Math.max(5,Math.min(100,Math.abs(r.hpnl)/maxAbsPnl*100));return <div className="pred-pnl-row" key={r.id}><div className="pred-pnl-name"><span className="pred-coin-badge">{avatarFor(r.symbol)}</span><span>{r.symbol.replace("USDT","")}</span></div><div className="pred-pnl-bar"><div className={`pred-pnl-fill ${up?"up":"down"}`} style={{width:`${width}%`}} /></div><div className={`pred-pnl-value ${up?"up":"down"}`}>{up?"+":"-"}{formatMoney(Math.abs(r.hpnl))}</div></div>})}</div>
-          </div>
-        </div>}
-
-        <div className="pred-holdings-head">
-          <div className="pred-holdings-title">My Holdings ({holdings.length})</div>
-          <div className="pred-holdings-tools"><input className="pred-search" placeholder="Search coin..." /><button className="pred-add" onClick={() => { setShowForm(true); setActiveTab("Holdings"); }}>＋ Add Trade</button></div>
-        </div>
-
-        {showForm && <div className="pred-form">{form}</div>}
-
-        <div className="pred-panel pred-table-panel">
-          {holdings.length === 0 ? <div className="pred-empty">No holdings yet. Add your first position above.</div> : (
-            <div className="pred-table-wrap"><table className="pred-table"><thead><tr><th>#</th><th>COIN</th><th>QUANTITY</th><th>AVG. ENTRY PRICE</th><th>INVESTED</th><th>CURRENT PRICE</th><th>CURRENT VALUE</th><th>P&amp;L</th><th>P&amp;L %</th><th>PLAN</th><th>NOTES</th><th>ACTION</th></tr></thead><tbody>
-              {rows.map((r, idx) => <tr key={r.id}><td>{idx+1}</td><td><div className="pred-coin"><span className="pred-coin-badge">{avatarFor(r.symbol)}</span><span><span className="pred-symbol">{r.symbol.replace("USDT","")}</span><span className="pred-symbol-sub">{r.symbol}</span></span></div></td><td className="mono">{formatQty(r.quantity)}</td><td className="mono">${formatPrice(r.entryPrice)}</td><td className="mono">{formatMoney(r.invested)}</td><td className="mono">${formatPrice(r.current)}</td><td className="mono">{formatMoney(r.value)}</td><td className={r.hpnl>=0?"pred-up":"pred-down"}>{r.hpnl>=0?"+":"-"}{formatMoney(Math.abs(r.hpnl))}</td><td className={r.hpnlPct>=0?"pred-up":"pred-down"}>{r.hpnlPct>=0?"+":""}{r.hpnlPct.toFixed(2)}%</td><td><span className="pred-plan">{r.plan}</span></td><td><span className="pred-note" title={r.notes}>{r.notes || "—"}</span></td><td><div className="pred-action"><button className="pred-row-btn" onClick={()=>startEdit(r)}>Edit</button><button className="pred-row-btn danger" onClick={()=>deleteHolding(r.id)}>Delete</button></div></td></tr>)}
-            </tbody></table></div>
-          )}
-        </div>
-      </>}
+      <Card style={{ marginTop:"14px" }}>
+        <div className="card-head"><div><span className="label">HOLDINGS</span><h2>Live positions</h2></div><span className="muted">Current prices update every 30s</span></div>
+        {holdings.length === 0 ? <div className="muted" style={{ padding:"24px 0" }}>No holdings yet. Add your first position above.</div> : (
+          <div className="table-wrap"><table><thead><tr><th>COIN</th><th>QTY</th><th>ENTRY</th><th>INVESTED</th><th>CURRENT</th><th>P&amp;L</th><th>PLAN</th><th></th></tr></thead><tbody>
+            {holdings.map((h)=>{const current=prices[h.symbol] || h.entryPrice; const value=h.quantity*current; const hpnl=value-h.invested; return <tr key={h.id}><td><b>{h.symbol.replace("USDT","/USDT")}</b></td><td className="mono">{h.quantity.toLocaleString(undefined,{maximumFractionDigits:8})}</td><td className="mono">${formatPrice(h.entryPrice)}</td><td className="mono">${h.invested.toFixed(2)}</td><td className="mono">${value.toFixed(2)}</td><td className={hpnl>=0?"up":"muted"}>{hpnl>=0?"+":"-"}${Math.abs(hpnl).toFixed(2)}</td><td>{h.plan}</td><td><button className="chip" type="button" onClick={()=>startEdit(h)}>Edit</button> <button className="chip" type="button" onClick={()=>deleteHolding(h.id)}>Delete</button></td></tr>})}
+          </tbody></table></div>
+        )}
+      </Card>
     </div>
   );
 }
