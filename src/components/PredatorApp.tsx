@@ -1013,6 +1013,9 @@ function Signals({
   const scanBusyRef = useRef(false);
   const lastAutoAttemptWindowRef = useRef<number | null>(null);
   const lastAutoAttemptAtRef = useRef(0);
+  const observedWindowRef = useRef<number | null>(null);
+  const autoRetryTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(false);
 
   const categoryLabel = (score: number) => {
     if (score >= 120) return "Extended / Pumped";
@@ -1136,38 +1139,84 @@ function Signals({
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     void loadHistory();
     void loadSignals("initial");
+
+    return () => {
+      mountedRef.current = false;
+      if (autoRetryTimerRef.current !== null) {
+        window.clearTimeout(autoRetryTimerRef.current);
+        autoRetryTimerRef.current = null;
+      }
+    };
   }, [loadSignals]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    const triggerAutoScan = async (windowId: number) => {
+      if (!mountedRef.current || scanBusyRef.current) return;
+      const now = Date.now();
+      const alreadyAttemptedThisWindow = lastAutoAttemptWindowRef.current === windowId;
+      const retryDue = now - lastAutoAttemptAtRef.current >= 5000;
+      if (alreadyAttemptedThisWindow && !retryDue) return;
+
+      lastAutoAttemptWindowRef.current = windowId;
+      lastAutoAttemptAtRef.current = now;
+
+      try {
+        await loadSignals("auto");
+      } finally {
+        if (!mountedRef.current) return;
+        const currentWindowId = Math.floor(Date.now() / SCAN_WINDOW_MS);
+        if (currentWindowId === windowId && appliedWindowRef.current !== windowId && !scanBusyRef.current) {
+          autoRetryTimerRef.current = window.setTimeout(() => {
+            autoRetryTimerRef.current = null;
+            void triggerAutoScan(windowId);
+          }, 5000);
+        }
+      }
+    };
+
+    const checkBoundary = () => {
       const now = Date.now();
       const currentWindowId = Math.floor(now / SCAN_WINDOW_MS);
-      const target = nextScanAt ?? ((currentWindowId + 1) * SCAN_WINDOW_MS);
-      const remaining = Math.max(0, Math.ceil((target - now) / 1000));
-      setSeconds(remaining);
+      const nextBoundaryMs = (currentWindowId + 1) * SCAN_WINDOW_MS;
+      const countdown = Math.max(0, Math.ceil((nextBoundaryMs - now) / 1000));
 
-      const appliedWindow = appliedWindowRef.current;
-      const pastBoundary = appliedWindow !== null && currentWindowId > appliedWindow;
-      const retryDue = now - lastAutoAttemptAtRef.current >= 10000;
-      const alreadyAttemptedThisWindow = lastAutoAttemptWindowRef.current === currentWindowId;
-
-      // The real 30-minute boundary is the automatic refresh trigger. We do
-      // not wait for an exact millisecond and we retry failed scans instead of
-      // leaving the page stuck at 00:00 until a browser refresh.
-      if (
-        pastBoundary &&
-        !scanBusyRef.current &&
-        (!alreadyAttemptedThisWindow || retryDue)
-      ) {
-        lastAutoAttemptWindowRef.current = currentWindowId;
-        lastAutoAttemptAtRef.current = now;
-        void loadSignals("auto");
+      // Use the real wall-clock 30-minute boundary as the source of truth.
+      // We deliberately do not depend on the previous API countdown value,
+      // so a stale/stuck response cannot leave the UI at 00:00 forever.
+      setSeconds(countdown);
+      if (observedWindowRef.current === null) {
+        observedWindowRef.current = currentWindowId;
       }
-    }, 500);
 
-    return () => window.clearInterval(timer);
+      if (currentWindowId !== observedWindowRef.current) {
+        observedWindowRef.current = currentWindowId;
+        lastAutoAttemptWindowRef.current = null;
+        void triggerAutoScan(currentWindowId);
+      } else if (countdown <= 1) {
+        // Pre-arm the scan at the boundary so we do not wait for a browser
+        // refresh or for an exact millisecond tick.
+        void triggerAutoScan(currentWindowId);
+      }
+
+      // Keep nextScanAt aligned to the real clock even before the API responds.
+      if (nextScanAt === null || nextScanAt < now - 1000 || nextScanAt > nextBoundaryMs + 1000) {
+        setNextScanAt(nextBoundaryMs);
+      }
+    };
+
+    checkBoundary();
+    const timer = window.setInterval(checkBoundary, 500);
+
+    return () => {
+      window.clearInterval(timer);
+      if (autoRetryTimerRef.current !== null) {
+        window.clearTimeout(autoRetryTimerRef.current);
+        autoRetryTimerRef.current = null;
+      }
+    };
   }, [nextScanAt, loadSignals]);
 
   const topRows = rows.slice(0, 24);
@@ -1680,157 +1729,199 @@ function HistorySignalStack({
 }
 
 function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
-  type Interval = "1h" | "4h" | "1d";
-  type Row = {
+  const [interval, setIntervalValue] = useState<"1h" | "4h" | "1d">("1h");
+  const [rows, setRows] = useState<Array<{
     symbol: string;
-    baseAsset: string;
     price: number;
-    quoteVolume24h: number;
+    change24h: number;
     volume: number;
     averageVolume: number;
     spike: number;
     rsi: number | null;
-    change1h: number | null;
-    change4h: number | null;
-    change1d: number | null;
-    level: "Extreme" | "High" | "Moderate" | "Normal";
-  };
-  const [interval, setIntervalValue] = useState<Interval>("1h");
-  const [filter, setFilter] = useState<"All" | "Extreme" | "High" | "Moderate" | "Normal">("All");
-  const [rows, setRows] = useState<Row[]>([]);
+    level: string;
+    reason: string;
+  }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   useEffect(() => {
     let active = true;
+
     const load = async () => {
       setLoading(true);
       setError("");
+
       try {
-        const response = await fetch(`/api/volume-spike?interval=${interval}&ts=${Date.now()}`, { cache: "no-store" });
+        const response = await fetch(`/api/volume-spike?interval=${interval}`, {
+          cache: "no-store",
+        });
+
         const data = await response.json();
-        if (!response.ok || !data.ok) throw new Error(data.error || "Volume data unavailable");
+
+        if (!response.ok || !data.ok) {
+          throw new Error(data.error || "Volume data unavailable");
+        }
+
         if (!active) return;
-        setRows(Array.isArray(data.rows) ? data.rows : []);
-        setLastUpdated(data.updatedAt ? new Date(data.updatedAt) : new Date());
-      } catch (e) {
+
+        setRows(data.rows || []);
+        setLastUpdated(new Date(data.updatedAt));
+      } catch (requestError) {
         if (!active) return;
-        setError(e instanceof Error ? e.message : "Volume data unavailable");
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Volume data unavailable"
+        );
       } finally {
         if (active) setLoading(false);
       }
     };
+
     load();
+
     const timer = window.setInterval(load, 60000);
-    return () => { active = false; window.clearInterval(timer); };
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [interval]);
 
-  const formatCompact = (value: number) => {
-    if (!Number.isFinite(value)) return "—";
-    if (Math.abs(value) >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
-    if (Math.abs(value) >= 1e6) return `${(value / 1e6).toFixed(0)}M`;
-    if (Math.abs(value) >= 1e3) return `${(value / 1e3).toFixed(0)}K`;
-    return value.toFixed(0);
+  const formatVolume = (value: number) => {
+    if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+    if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+    if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+    return `$${value.toFixed(0)}`;
   };
-  const formatPct = (value: number | null) => value == null || !Number.isFinite(value) ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
-  const filtered = useMemo(() => {
-    const source = filter === "All" ? rows : rows.filter((row) => row.level === filter);
-    return source.slice(0, 40);
-  }, [filter, rows]);
 
-  const filterButtons: Array<[typeof filter, string]> = [
-    ["All", "All"], ["Extreme", "Extreme"], ["High", "High"], ["Moderate", "Moderate"], ["Normal", "Normal"],
-  ];
+  const formatRsi = (value: number | null) =>
+    value === null ? "—" : value.toFixed(0);
+
+  const rsiStatus = (value: number | null) => {
+    if (value === null) return "Normal";
+    if (value >= 70) return "Overbought";
+    if (value <= 30) return "Oversold";
+    return "Neutral";
+  };
 
   return (
-    <div className="page" style={{ paddingTop: 8 }}>
-      <div style={{
-        display:"flex", alignItems:"center", justifyContent:"space-between", gap:18, flexWrap:"wrap",
-        marginBottom: 18,
-      }}>
-        <div style={{ display:"flex", alignItems:"center", gap:16 }}>
-          <div style={{ width:58, height:58, borderRadius:16, display:"grid", placeItems:"center", background:"linear-gradient(145deg, rgba(17,34,49,.95), rgba(5,13,21,.95))", border:"1px solid rgba(87,126,162,.22)", boxShadow:"0 12px 30px rgba(0,0,0,.18)" }}>
-            <BarChart3 size={30} strokeWidth={1.7} />
-          </div>
-          <div>
-            <h1 style={{ margin:0, fontSize:34, letterSpacing:"-.025em" }}>
-              VOLUME <span style={{ color:"#ff3a45" }}>SPIKE</span>
-            </h1>
-            <div style={{ marginTop:4, fontSize:15, color:"#91a6bb" }}>Unusual Trading Activity</div>
-          </div>
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">UNUSUAL ACTIVITY</p>
+          <h1>Volume Spike</h1>
+          <p className="muted">
+            Activity monitor — not a trade signal.
+          </p>
         </div>
 
-        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-          {([ ["1h","1H"],["4h","4H"],["1d","1D"] ] as const).map(([value,label]) => (
-            <button key={value} type="button" onClick={() => setIntervalValue(value)} style={{
-              minWidth:92, height:50, borderRadius:12, border: interval === value ? "1px solid #ff3a45" : "1px solid rgba(86,122,155,.25)",
-              background: interval === value ? "linear-gradient(180deg, rgba(255,58,69,.15), rgba(31,16,21,.92))" : "rgba(8,18,28,.78)",
-              color: interval === value ? "#fff" : "#a9bfd4", fontSize:17, fontWeight:700,
-              boxShadow: interval === value ? "0 0 18px rgba(255,58,69,.16)" : "none",
-            }}>{label}</button>
-          ))}
-          <div style={{ width:10 }} />
-          {filterButtons.map(([value,label]) => (
-            <button key={value} type="button" onClick={() => setFilter(value)} style={{
-              minWidth: value === "Moderate" ? 124 : 98, height:50, borderRadius:12,
-              border: filter === value ? "1px solid #ff3a45" : "1px solid rgba(86,122,155,.25)",
-              background: filter === value ? "linear-gradient(180deg, rgba(255,58,69,.14), rgba(31,16,21,.92))" : "rgba(8,18,28,.78)",
-              color: filter === value ? "#fff" : "#a9bfd4", fontSize:16, fontWeight:700,
-            }}>{label}</button>
+        <div className="chips">
+          {([
+            ["1h", "1H"],
+            ["4h", "4H"],
+            ["1d", "1D"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              className={interval === value ? "chip active" : "chip"}
+              onClick={() => setIntervalValue(value)}
+            >
+              {label}
+            </button>
           ))}
         </div>
       </div>
 
-      <div style={{
-        borderRadius:18, overflow:"hidden", background:"linear-gradient(180deg, rgba(5,17,27,.96), rgba(3,10,17,.98))",
-        border:"1px solid rgba(75,110,141,.20)", boxShadow:"0 18px 50px rgba(0,0,0,.20)"
-      }}>
-        <div style={{ display:"grid", gridTemplateColumns:"56px minmax(190px,1.35fr) minmax(160px,1fr) 120px 120px 1fr 1fr 1fr 150px", alignItems:"center", padding:"15px 18px", color:"#a9bfd4", fontSize:16, borderBottom:"1px solid rgba(84,117,145,.16)" }}>
-          {['#','COIN','VOLUME','SPIKE','RSI (1H)','RSI STATUS','1H','4H','1D','STATUS'].map((h,i) => i===9 ? <span key={h} style={{ textAlign:"right" }}>{h}</span> : <span key={h}>{h}</span>)}
+      <Card>
+        <div className="card-head">
+          <div>
+            <span className="label">LIVE SCAN</span>
+            <h2>{loading ? "Scanning..." : `${rows.length} markets`}</h2>
+          </div>
+
+          <span className="muted">
+            {lastUpdated
+              ? `Updated ${lastUpdated.toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}`
+              : "Waiting for data"}
+          </span>
         </div>
 
         {error ? (
-          <div style={{ padding:40, color:"#ff6f7a" }}>{error}</div>
-        ) : loading && filtered.length === 0 ? (
-          <div style={{ padding:42, color:"#90a4b8" }}>Scanning Binance USDT markets…</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ padding:42, color:"#90a4b8" }}>No strong volume expansion found for this timeframe.</div>
+          <div className="auth-message error">{error}</div>
+        ) : loading && rows.length === 0 ? (
+          <div className="muted" style={{ padding: "22px 0" }}>
+            Loading unusual activity…
+          </div>
+        ) : rows.length === 0 ? (
+          <div className="muted" style={{ padding: "22px 0" }}>
+            No unusual activity found for this timeframe.
+          </div>
         ) : (
-          <div>
-            {filtered.map((row,index) => {
-              const rsiStatus = row.rsi == null ? "Neutral" : row.rsi >= 70 ? "Overbought" : row.rsi <= 30 ? "Oversold" : "Neutral";
-              const spikeBg = row.spike >= 3 ? "rgba(255,55,70,.12)" : row.spike >= 2 ? "rgba(255,184,34,.12)" : "rgba(255,210,74,.10)";
-              const spikeBorder = row.spike >= 3 ? "rgba(255,55,70,.30)" : "rgba(255,190,35,.28)";
-              return (
-                <div key={row.symbol} onClick={() => onCoinClick(row.symbol)} style={{
-                  display:"grid", gridTemplateColumns:"56px minmax(190px,1.35fr) minmax(160px,1fr) 120px 120px 1fr 1fr 1fr 150px", alignItems:"center",
-                  minHeight:76, padding:"0 18px", borderBottom:"1px solid rgba(84,117,145,.13)", cursor:"pointer",
-                }}>
-                  <div><span style={{ width:42, height:42, display:"grid", placeItems:"center", border:"1px solid rgba(120,153,184,.35)", borderRadius:9, color:"#b5c9dc", fontSize:15 }}>{index+1}</span></div>
-                  <div style={{ display:"flex", alignItems:"center", gap:13, minWidth:0 }}>
-                    <img src={`https://assets.coincap.io/assets/icons/${row.baseAsset.toLowerCase()}@2x.png`} alt="" width={38} height={38} style={{ borderRadius:"50%", background:"#101a23" }} onError={(e)=>{ (e.currentTarget as HTMLImageElement).style.visibility='hidden'; }} />
-                    <div style={{ minWidth:0 }}><div style={{ fontWeight:800, fontSize:18, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{row.baseAsset} <span style={{ color:"#7f93a6", fontSize:13, fontWeight:600 }}>/USDT</span></div></div>
-                  </div>
-                  <div><div style={{ fontSize:18, fontWeight:800 }}>${formatCompact(row.volume)}</div><div style={{ color:"#8095a9", fontSize:14 }}>Avg ${formatCompact(row.averageVolume)}</div></div>
-                  <div><span style={{ display:"inline-flex", minWidth:74, justifyContent:"center", padding:"8px 12px", borderRadius:10, background:spikeBg, border:`1px solid ${spikeBorder}`, color: row.spike >= 3 ? "#ff5b69" : "#ffd447", fontWeight:800, fontSize:17 }}>{row.spike.toFixed(1)}×</span></div>
-                  <div style={{ fontSize:17, fontWeight:700 }}>{row.rsi == null ? "—" : row.rsi.toFixed(1)}</div>
-                  <div><span style={{ display:"inline-flex", padding:"10px 14px", borderRadius:10, background: rsiStatus === "Overbought" ? "rgba(255,55,70,.11)" : rsiStatus === "Oversold" ? "rgba(0,235,167,.11)" : "rgba(46,91,131,.18)", border:`1px solid ${rsiStatus === "Neutral" ? "rgba(76,118,157,.25)" : "rgba(255,255,255,.06)"}`, color: rsiStatus === "Overbought" ? "#ff5968" : rsiStatus === "Oversold" ? "#00e7a4" : "#9bb6cf", fontWeight:700 }}>{rsiStatus}</span></div>
-                  <div><span style={{ display:"inline-flex", padding:"9px 13px", borderRadius:9, background: (row.change1h ?? 0) >= 0 ? "rgba(0,205,145,.10)" : "rgba(255,60,75,.10)", color:(row.change1h ?? 0) >= 0 ? "#00e5a2" : "#ff6471", fontWeight:800 }}>{formatPct(row.change1h)}</span></div>
-                  <div><span style={{ display:"inline-flex", padding:"9px 13px", borderRadius:9, background:(row.change4h ?? 0) >= 0 ? "rgba(0,205,145,.10)" : "rgba(255,60,75,.10)", color:(row.change4h ?? 0) >= 0 ? "#00e5a2" : "#ff6471", fontWeight:800 }}>{formatPct(row.change4h)}</span></div>
-                  <div><span style={{ display:"inline-flex", padding:"9px 13px", borderRadius:9, background:(row.change1d ?? 0) >= 0 ? "rgba(0,205,145,.10)" : "rgba(255,60,75,.10)", color:(row.change1d ?? 0) >= 0 ? "#00e5a2" : "#ff6471", fontWeight:800 }}>{formatPct(row.change1d)}</span></div>
-                  <div style={{ textAlign:"right" }}><span style={{ display:"inline-flex", minWidth:112, justifyContent:"center", padding:"10px 14px", borderRadius:10, border:"1px solid rgba(150,170,190,.20)", color: row.level === "Extreme" ? "#ff5463" : row.level === "High" ? "#ff9a34" : row.level === "Moderate" ? "#f0d13d" : "#b4cae0", background: row.level === "Extreme" ? "rgba(255,55,70,.11)" : row.level === "High" ? "rgba(255,143,44,.10)" : row.level === "Moderate" ? "rgba(229,196,55,.08)" : "rgba(52,91,125,.18)", fontWeight:800 }}>{row.level}</span></div>
-                </div>
-              );
-            })}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>COIN</th>
+                  <th>SPIKE</th>
+                  <th>VOLUME</th>
+                  <th>RSI</th>
+                  <th>RSI STATUS</th>
+                  <th>LEVEL</th>
+                  <th>WHY</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.map((row) => (
+                  <tr
+                    key={row.symbol}
+                    onClick={() => onCoinClick(row.symbol)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td>
+                      <b>{row.symbol.replace("USDT", "/USDT")}</b>
+                    </td>
+
+                    <td className="mono">
+                      {row.spike.toFixed(1)}×
+                    </td>
+
+                    <td className="mono">
+                      {formatVolume(row.volume)}
+                    </td>
+
+                    <td className="mono">
+                      {formatRsi(row.rsi)}
+                    </td>
+
+                    <td>
+                      <span className="muted">
+                        {rsiStatus(row.rsi)}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className={`level ${row.level.toLowerCase()}`}>
+                        {row.level}
+                      </span>
+                    </td>
+
+                    <td>
+                      <span className="muted">{row.reason}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
-
-        <div style={{ padding:"13px 18px", display:"flex", justifyContent:"space-between", color:"#71869a", fontSize:12, borderTop:"1px solid rgba(84,117,145,.13)" }}>
-          <span>{filtered.length} qualifying markets</span>
-          <span>{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"})}` : "Waiting for data"}</span>
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }
