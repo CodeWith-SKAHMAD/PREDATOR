@@ -1750,29 +1750,41 @@ function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
+
     const load = async () => {
       setLoading(true);
       setError("");
       try {
-        const response = await fetch(`/api/volume-spike?interval=${interval}&ts=${Date.now()}`, { cache: "no-store" });
+        const url = `/api/volume-spike?interval=${encodeURIComponent(interval)}&ts=${Date.now()}`;
+        const response = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+          headers: { "Cache-Control": "no-cache, no-store, max-age=0", Pragma: "no-cache" },
+        });
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || "Volume data unavailable");
-        if (!active) return;
+        if (!active || requestId !== requestIdRef.current) return;
         setRows(Array.isArray(data.rows) ? data.rows : []);
         setLastUpdated(data.updatedAt ? new Date(data.updatedAt) : new Date());
       } catch (e) {
-        if (!active) return;
+        if (!active || requestId !== requestIdRef.current) return;
+        if (e instanceof DOMException && e.name === "AbortError") return;
         setError(e instanceof Error ? e.message : "Volume data unavailable");
+        setRows([]);
       } finally {
-        if (active) setLoading(false);
+        if (active && requestId === requestIdRef.current) setLoading(false);
       }
     };
-    load();
-    const timer = window.setInterval(load, 60000);
-    return () => { active = false; window.clearInterval(timer); };
+
+    void load();
+    const timer = window.setInterval(() => void load(), 60000);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); };
   }, [interval]);
 
   const formatCompact = (value: number) => {
@@ -1829,6 +1841,7 @@ function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
             }}>{label}</button>
           ))}
         </div>
+        <div style={{ marginTop: 8, color: "#71869a", fontSize: 12, textAlign: "right" }}>Scanning timeframe: <b style={{ color: "#cfe0ee" }}>{interval.toUpperCase()}</b></div>
       </div>
 
       <div style={{
@@ -1836,7 +1849,7 @@ function VolumeSpike({ onCoinClick }:{ onCoinClick:(symbol:string)=>void }) {
         border:"1px solid rgba(75,110,141,.20)", boxShadow:"0 18px 50px rgba(0,0,0,.20)"
       }}>
         <div style={{ display:"grid", gridTemplateColumns:"56px minmax(190px,1.35fr) minmax(160px,1fr) 120px 120px 1fr 1fr 1fr 150px", alignItems:"center", padding:"15px 18px", color:"#a9bfd4", fontSize:16, borderBottom:"1px solid rgba(84,117,145,.16)" }}>
-          {['#','COIN','VOLUME','SPIKE','RSI (1H)','RSI STATUS','1H','4H','1D','STATUS'].map((h,i) => i===9 ? <span key={h} style={{ textAlign:"right" }}>{h}</span> : <span key={h}>{h}</span>)}
+          {['#','COIN',`VOLUME (${interval.toUpperCase()})`,`SPIKE (${interval.toUpperCase()})`,`RSI (${interval.toUpperCase()})`,'RSI STATUS','1H','4H','1D','STATUS'].map((h,i) => i===9 ? <span key={h} style={{ textAlign:"right" }}>{h}</span> : <span key={h}>{h}</span>)}
         </div>
 
         {error ? (
