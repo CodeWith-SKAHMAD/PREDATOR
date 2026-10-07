@@ -833,7 +833,7 @@ function CompactSignalCard({
         <div className="mono" style={{ fontSize: 24, fontWeight: 800, marginTop: 9, letterSpacing: ".01em" }}>
           {formatPrice(price)}
         </div>
-        <div style={{ color: "#74808c", fontSize: 9, marginTop: 2 }}>CURRENT PRICE</div>
+        <div style={{ color: "#74808c", fontSize: 9, marginTop: 2 }}>TRIGGER PRICE</div>
 
         <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
           {metricBox("1H", change1h)}
@@ -970,6 +970,8 @@ function Signals({
     fundingRate: number | null;
     baseAsset: string;
     capturedAt: string;
+    currentPrice?: number;
+    triggerPrice?: number;
   };
 
   type HistoryRow = {
@@ -1085,9 +1087,15 @@ function Signals({
       // The API decides whether this window already has the canonical
       // shared snapshot. At a real 30-minute boundary, a new snapshot is
       // generated exactly once and then shared with every device/account.
-      const forceParam = mode === "manual" ? "&force=1" : "";
-      const response = await fetch(`/api/signals?windowId=${Math.floor(Date.now() / SCAN_WINDOW_MS)}&ts=${Date.now()}${forceParam}`, {
+      const currentWindowId = Math.floor(Date.now() / SCAN_WINDOW_MS);
+      const forceParam = mode === "manual" ? "&force=1&hard=1" : "";
+      const response = await fetch(`/api/signals?windowId=${currentWindowId}&ts=${Date.now()}${forceParam}`, {
+        method: "GET",
         cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, max-age=0",
+          Pragma: "no-cache",
+        },
       });
       const payload = await response.json();
 
@@ -1196,6 +1204,7 @@ function Signals({
               loadSignals("manual")
             }
             disabled={scanning}
+            title="Run a fresh scan for the current 30-minute window"
           >
             <RefreshCw
               size={15}
@@ -1310,7 +1319,19 @@ function Signals({
               </div>
             )}
 
+            {scanning && (
+              <div
+                style={{
+                  padding: "18px 30px 8px",
+                  textAlign: "center",
+                }}
+              >
+                <p className="muted">Scanning eligible Binance USDT markets…</p>
+              </div>
+            )}
+
             {!loading &&
+              !scanning &&
               !error &&
               topRows.length === 0 && (
                 <div
@@ -1344,7 +1365,7 @@ function Signals({
                     direction={signal.direction === "SHORT" ? "SHORT" : "LONG"}
                     score={signal.score}
                     status={categoryLabel(signal.score)}
-                    price={signal.price}
+                    price={signal.triggerPrice}
                     change15m={signal.change15m}
                     change1h={signal.change1h}
                     support={signal.support}
@@ -1435,7 +1456,11 @@ function Signals({
                       direction={item.direction}
                       score={item.score}
                       status={item.status}
-                      price={Number(item.price ?? 0)}
+                      price={
+                        typeof meta?.triggerPrice === "number"
+                          ? meta.triggerPrice
+                          : Number(item.price ?? 0)
+                      }
                       change15m={typeof meta?.change15m === "number" ? meta.change15m : null}
                       change1h={typeof meta?.change1h === "number" ? meta.change1h : null}
                       support={typeof meta?.support === "number" ? meta.support : null}
