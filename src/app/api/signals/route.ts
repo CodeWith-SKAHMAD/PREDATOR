@@ -217,26 +217,26 @@ async function migrateLegacyHistory() {
       return;
     }
 
-    const rows = data
-      .map((row: any) => {
-        const timestamp = Date.parse(row.signal_time);
-        if (!Number.isFinite(timestamp)) return null;
-        return {
+    const rows = data.flatMap((row: any) => {
+      const timestamp = Date.parse(row.signal_time);
+      if (!Number.isFinite(timestamp)) return [];
+      return [
+        {
           window_id: Math.floor(timestamp / WINDOW_MS),
-          symbol: row.symbol,
+          symbol: String(row.symbol ?? ""),
           direction: row.direction,
-          score: row.score,
-          status: row.status,
-          price: row.price,
+          score: Number(row.score ?? 0),
+          status: String(row.status ?? ""),
+          price: row.price == null ? null : Number(row.price),
           signal_time: row.signal_time,
-          expires_at: row.expires_at,
-          volume_spike: row.volume_spike,
-          rsi: row.rsi,
+          expires_at: row.expires_at ?? null,
+          volume_spike: row.volume_spike == null ? null : Number(row.volume_spike),
+          rsi: row.rsi == null ? null : Number(row.rsi),
           tool_scores: row.tool_scores ?? {},
-          reason: row.reason,
-        };
-      })
-      .filter(Boolean);
+          reason: row.reason ?? null,
+        },
+      ];
+    });
 
     if (rows.length) {
       await sharedSupabase
