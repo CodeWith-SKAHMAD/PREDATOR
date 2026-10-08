@@ -67,36 +67,51 @@ function SessionBar() {
 
   const minutes = now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60;
   const sessions = [
-    { name: "ASIA", start: 0, end: 7 * 60, color: "asia" },
-    { name: "LONDON", start: 7 * 60, end: 13 * 60, color: "london" },
-    { name: "NEW YORK", start: 13 * 60, end: 21 * 60, color: "newyork" },
+    { name: "ASIA", start: 0, end: 8 * 60, color: "asia", range: "00–08" },
+    { name: "LONDON", start: 8 * 60, end: 16 * 60, color: "london", range: "08–16" },
+    { name: "NEW YORK", start: 16 * 60, end: 24 * 60, color: "newyork", range: "16–24" },
   ];
-  const active = sessions.find((item) => minutes >= item.start && minutes < item.end) ?? null;
-  const activeProgress = active
-    ? Math.max(0, Math.min(100, ((minutes - active.start) / (active.end - active.start)) * 100))
-    : 100;
+  const active = sessions.find((item) => minutes >= item.start && minutes < item.end) ?? sessions[sessions.length - 1];
+  const activeProgress = Math.max(0, Math.min(100, ((minutes - active.start) / (active.end - active.start)) * 100));
+  const remainingMinutes = Math.max(0, active.end - minutes);
+  const remainingHours = Math.floor(remainingMinutes / 60);
+  const remainingMins = Math.floor(remainingMinutes % 60);
 
   return <div className="sessionbar">
-    <div className="session-title"><Clock3 size={15}/><span>MARKET SESSION</span></div>
+    <div className="session-live-box">
+      <span className={`session-live-dot session-dot-${active.color}`} />
+      <div>
+        <small>ACTIVE SESSION</small>
+        <strong>{active.name}</strong>
+      </div>
+      <span className="session-live-chip">LIVE</span>
+    </div>
+
     <div className="sessions">
       {sessions.map((item) => {
-        const isActive = item.name === active?.name;
-        const isPast = active ? item.end <= minutes : item.end <= minutes;
+        const isActive = item.name === active.name;
+        const isPast = item.end <= minutes && !isActive;
+        const progress = isActive ? activeProgress : isPast ? 100 : 0;
         return (
           <div key={item.name} className={`session session-${item.color} ${isActive ? "active" : ""} ${isPast ? "past" : ""}`}>
             <div className="session-meta">
               <span>{item.name}</span>
-              <small>{isActive ? `${Math.round(activeProgress)}%` : item.name === "ASIA" ? "00–07" : item.name === "LONDON" ? "07–13" : "13–21"}</small>
+              <small>{isActive ? `${Math.round(activeProgress)}%` : item.range}</small>
             </div>
             <div className="session-track">
-              <div className="session-fill" style={{ width: isActive ? `${activeProgress}%` : isPast ? "100%" : "0%" }} />
+              <div className="session-fill" style={{ width: `${progress}%` }} />
             </div>
             {isActive ? <span className="session-state">LIVE</span> : null}
           </div>
         );
       })}
     </div>
-    <div className="clock">{now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div>
+
+    <div className="session-now-box">
+      <span className="session-now-label">ENDS IN</span>
+      <strong>{String(remainingHours).padStart(2,"0")}:{String(remainingMins).padStart(2,"0")}</strong>
+      <span className="clock">{now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>
+    </div>
   </div>
 }
 
@@ -315,7 +330,7 @@ function Dashboard({
         fetch(`/api/volume-spike?interval=1h&ts=${Date.now()}`, {
           cache: "no-store",
         }),
-        fetch("https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT", { cache: "no-store" })
+        fetch("https://xaus.com/api/v1/spot", { cache: "no-store" })
           .then(async (response) => {
             if (!response.ok) return null;
             return response.json();
@@ -329,7 +344,7 @@ function Dashboard({
         volumeResponse.json(),
       ]);
 
-      const parsedXau = Number(xauData?.symbols?.[0]?.price);
+      const parsedXau = Number(xauData?.spot_usd_oz ?? xauData?.xau?.price);
       setXauPrice(Number.isFinite(parsedXau) ? parsedXau : null);
 
       if (!marketResponse.ok || !marketData.ok) {
@@ -3552,20 +3567,31 @@ export default function PredatorApp({ user }: { user: User }){
       .live-price-card>strong { display:block; margin:13px 0 10px; font-family:var(--font-mono,monospace); font-size:clamp(19px,1.55vw,26px); letter-spacing:-.02em; }
       .live-price-bottom { color:#747b86; font-size:10px; } .live-price-bottom b { font-family:var(--font-mono,monospace); font-size:11px; }
 
-      /* Large market-session strip */
-      .app .topbar .sessionbar { display:grid !important; grid-template-columns:auto minmax(420px,1fr) auto !important; align-items:center !important; gap:14px !important; min-width:0 !important; width:100% !important; }
-      .app .topbar .sessions { display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:8px !important; min-width:0 !important; }
-      .app .topbar .session { position:relative !important; min-width:0 !important; min-height:42px !important; padding:8px 11px 9px !important; border-radius:11px !important; border:1px solid rgba(255,255,255,.09) !important; background:rgba(255,255,255,.025) !important; color:#818893 !important; overflow:hidden !important; }
+      /* Market-session bar: active session is explicit and always visible */
+      .app .topbar .sessionbar { display:grid !important; grid-template-columns:minmax(170px,210px) minmax(420px,1fr) minmax(118px,150px) !important; align-items:center !important; gap:12px !important; min-width:0 !important; width:100% !important; }
+      .app .topbar .session-live-box { display:flex; align-items:center; gap:9px; min-width:0; padding:9px 12px; border:1px solid rgba(255,255,255,.10); border-radius:12px; background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.018)); }
+      .app .topbar .session-live-box > div { min-width:0; display:grid; gap:2px; }
+      .app .topbar .session-live-box small,.app .topbar .session-now-label { font-size:7px; font-weight:800; letter-spacing:.16em; color:#747c88; }
+      .app .topbar .session-live-box strong { font-family:var(--font-mono,monospace); font-size:13px; letter-spacing:.08em; white-space:nowrap; }
+      .app .topbar .session-live-chip { margin-left:auto; color:#61f5c0; font-size:7px; font-weight:900; letter-spacing:.14em; padding:3px 6px; border-radius:999px; border:1px solid rgba(97,245,192,.28); background:rgba(97,245,192,.06); }
+      .app .topbar .session-live-dot { width:9px; height:9px; flex:0 0 9px; border-radius:50%; box-shadow:0 0 12px currentColor; animation:predatorSessionPulse 1.6s ease-in-out infinite; }
+      .session-dot-asia { color:#4ca6ff; background:#4ca6ff; } .session-dot-london { color:#31d99a; background:#31d99a; } .session-dot-newyork { color:#ffc23d; background:#ffc23d; }
+      @keyframes predatorSessionPulse { 0%,100%{transform:scale(.92);opacity:.72} 50%{transform:scale(1.12);opacity:1} }
+      .app .topbar .sessions { display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:7px !important; min-width:0 !important; }
+      .app .topbar .session { position:relative !important; min-width:0 !important; min-height:46px !important; padding:8px 10px 9px !important; border-radius:11px !important; border:1px solid rgba(255,255,255,.09) !important; background:rgba(255,255,255,.018) !important; color:#707783 !important; overflow:hidden !important; transition:border-color .25s ease,background .25s ease,transform .25s ease,opacity .25s ease !important; }
       .app .topbar .session-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; position:relative; z-index:2; }
-      .app .topbar .session-meta span { font-family:var(--font-mono,monospace); font-size:10px; font-weight:800; letter-spacing:.12em; }
-      .app .topbar .session-meta small { font-size:8px; opacity:.72; }
-      .app .topbar .session-track { position:relative; height:5px; margin-top:7px; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden; }
+      .app .topbar .session-meta span { font-family:var(--font-mono,monospace); font-size:9px; font-weight:900; letter-spacing:.12em; }
+      .app .topbar .session-meta small { font-size:7px; opacity:.7; }
+      .app .topbar .session-track { position:relative; height:6px; margin-top:8px; border-radius:999px; background:rgba(255,255,255,.07); overflow:hidden; }
       .app .topbar .session-fill { height:100%; border-radius:inherit; transition:width 900ms linear; }
-      .app .topbar .session-state { position:absolute; right:9px; bottom:5px; font-size:7px; font-weight:900; letter-spacing:.12em; opacity:.75; }
-      .app .topbar .session-asia.active { border-color:rgba(72,153,255,.65) !important; background:linear-gradient(180deg,rgba(36,112,210,.20),rgba(16,34,58,.28)) !important; color:#cce5ff !important; } .app .topbar .session-asia .session-fill { background:linear-gradient(90deg,#3d8dff,#56c7ff); }
-      .app .topbar .session-london.active { border-color:rgba(20,211,154,.65) !important; background:linear-gradient(180deg,rgba(20,211,154,.18),rgba(11,46,39,.28)) !important; color:#b8ffe9 !important; } .app .topbar .session-london .session-fill { background:linear-gradient(90deg,#16c995,#66f2c7); }
-      .app .topbar .session-newyork.active { border-color:rgba(255,193,7,.72) !important; background:linear-gradient(180deg,rgba(255,193,7,.16),rgba(57,45,8,.24)) !important; color:#fff0a8 !important; } .app .topbar .session-newyork .session-fill { background:linear-gradient(90deg,#ff9d00,#ffd54a); }
-      .app .topbar .session.past { opacity:.55; } .app .topbar .session-title { white-space:nowrap; } .app .topbar .clock { font-family:var(--font-mono,monospace); font-weight:800; white-space:nowrap; }
+      .app .topbar .session-state { position:absolute; right:9px; bottom:5px; font-size:6px; font-weight:900; letter-spacing:.12em; opacity:.75; }
+      .app .topbar .session-asia.active { border-color:rgba(76,166,255,.72) !important; background:linear-gradient(180deg,rgba(39,115,215,.18),rgba(16,32,55,.30)) !important; color:#d7ecff !important; transform:translateY(-1px); box-shadow:0 8px 22px rgba(34,118,219,.10); } .app .topbar .session-asia .session-fill { background:linear-gradient(90deg,#3d8dff,#56c7ff); }
+      .app .topbar .session-london.active { border-color:rgba(49,217,154,.72) !important; background:linear-gradient(180deg,rgba(30,176,131,.17),rgba(11,46,39,.30)) !important; color:#c7ffeb !important; transform:translateY(-1px); box-shadow:0 8px 22px rgba(21,190,143,.10); } .app .topbar .session-london .session-fill { background:linear-gradient(90deg,#16c995,#66f2c7); }
+      .app .topbar .session-newyork.active { border-color:rgba(255,194,61,.78) !important; background:linear-gradient(180deg,rgba(255,169,21,.16),rgba(57,45,8,.27)) !important; color:#fff3b4 !important; transform:translateY(-1px); box-shadow:0 8px 22px rgba(255,176,25,.10); } .app .topbar .session-newyork .session-fill { background:linear-gradient(90deg,#ff9d00,#ffd54a); }
+      .app .topbar .session.past { opacity:.38; } .app .topbar .session-live-dot + div + .session-live-chip { opacity:1; }
+      .app .topbar .session-now-box { min-width:0; display:grid; justify-items:end; gap:2px; padding-right:2px; }
+      .app .topbar .session-now-box strong { font-family:var(--font-mono,monospace); font-size:13px; letter-spacing:.06em; color:#f1f3f6; white-space:nowrap; }
+      .app .topbar .session-now-box .clock { margin-top:2px; font-family:var(--font-mono,monospace); font-size:9px; font-weight:800; color:#858d9a; white-space:nowrap; }
 
       /* PREDATOR mobile app shell: presentation-only responsive overrides. */
       @media (max-width: 767px) {
@@ -3650,13 +3676,16 @@ export default function PredatorApp({ user }: { user: User }){
           -webkit-backdrop-filter: blur(16px) !important;
         }
         .app .topbar > .icon-btn { flex: 0 0 38px !important; width: 38px !important; height: 38px !important; }
-        .app .topbar .sessionbar { grid-template-columns:minmax(0,1fr) auto !important; flex:1 1 auto !important; min-width:0 !important; width:auto !important; gap:6px !important; overflow:hidden !important; }
-        .app .topbar .session-title { display:none !important; }
+        .app .topbar .sessionbar { grid-template-columns:minmax(0,1fr) auto !important; flex:1 1 auto !important; min-width:0 !important; width:auto !important; gap:5px !important; overflow:hidden !important; }
+        .app .topbar .session-live-box { display:flex !important; min-width:88px !important; padding:5px 7px !important; border-radius:8px !important; gap:6px !important; }
+        .app .topbar .session-live-box small { font-size:5px !important; } .app .topbar .session-live-box strong { font-size:8px !important; } .app .topbar .session-live-chip { font-size:5px !important; padding:2px 4px !important; }
+        .app .topbar .session-live-dot { width:6px !important; height:6px !important; flex-basis:6px !important; }
         .app .topbar .sessions { grid-template-columns:repeat(3,minmax(0,1fr)) !important; min-width:0 !important; gap:3px !important; overflow:hidden !important; }
         .app .topbar .session { min-height:34px !important; padding:5px 5px 6px !important; border-radius:8px !important; white-space:nowrap !important; }
         .app .topbar .session-meta span { font-size:7px !important; letter-spacing:.06em !important; } .app .topbar .session-meta small { font-size:6px !important; }
         .app .topbar .session-track { height:3px !important; margin-top:5px !important; } .app .topbar .session-state { display:none !important; }
-        .app .topbar .clock { flex:0 0 auto !important; font-size:10px !important; white-space:nowrap !important; }
+        .app .topbar .session-now-box { min-width:54px !important; padding:0 !important; gap:0 !important; }
+        .app .topbar .session-now-label { font-size:5px !important; } .app .topbar .session-now-box strong { font-size:8px !important; } .app .topbar .session-now-box .clock { font-size:7px !important; }
         .market-price-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:9px !important; }
         .live-price-card { padding:12px 11px !important; border-radius:13px !important; } .live-price-name { display:none !important; } .live-price-symbol { font-size:13px !important; }
         .live-price-card>strong { font-size:16px !important; margin:10px 0 8px !important; } .live-price-bottom { font-size:8px !important; } .live-price-bottom b { font-size:9px !important; }
