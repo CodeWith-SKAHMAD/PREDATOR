@@ -3475,6 +3475,147 @@ export default function PredatorApp({ user }: { user: User }){
           transition: none !important;
         }
       }
+      /* PREDATOR mobile app shell: presentation-only responsive overrides. */
+      @media (max-width: 767px) {
+        html, body { max-width: 100%; overflow-x: hidden !important; }
+        .app { min-height: 100dvh !important; width: 100% !important; min-width: 0 !important; overflow-x: hidden !important; }
+        .app main { width: 100% !important; min-width: 0 !important; margin-left: 0 !important; padding-left: 0 !important; }
+
+        /* Desktop sidebar becomes a fixed mobile bottom app bar. */
+        .app .sidebar {
+          position: fixed !important;
+          left: 0 !important;
+          right: 0 !important;
+          top: auto !important;
+          bottom: 0 !important;
+          width: 100% !important;
+          height: calc(66px + env(safe-area-inset-bottom)) !important;
+          min-height: 66px !important;
+          max-height: 86px !important;
+          z-index: 10050 !important;
+          display: flex !important;
+          flex-direction: row !important;
+          align-items: stretch !important;
+          justify-content: center !important;
+          padding: 6px 6px env(safe-area-inset-bottom) !important;
+          border: 0 !important;
+          border-top: 1px solid rgba(255,255,255,.10) !important;
+          background: rgba(5,7,11,.96) !important;
+          backdrop-filter: blur(18px) !important;
+          -webkit-backdrop-filter: blur(18px) !important;
+          box-shadow: 0 -10px 36px rgba(0,0,0,.36) !important;
+        }
+        .app .sidebar .logo-link,
+        .app .sidebar .side-bottom { display: none !important; }
+        .app .sidebar nav {
+          width: 100% !important;
+          height: 100% !important;
+          display: grid !important;
+          grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+          align-items: stretch !important;
+          gap: 2px !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        .app .sidebar .nav-item {
+          min-width: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          margin: 0 !important;
+          padding: 7px 2px !important;
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: center !important;
+          gap: 3px !important;
+          border-radius: 12px !important;
+          border: 1px solid transparent !important;
+          background: transparent !important;
+          color: #8d97a7 !important;
+          font-size: 0 !important;
+        }
+        .app .sidebar .nav-item span { display: none !important; }
+        .app .sidebar .nav-item svg { width: 22px !important; height: 22px !important; stroke-width: 1.8 !important; }
+        .app .sidebar .nav-item.active {
+          color: #fff !important;
+          border-color: rgba(255,55,80,.42) !important;
+          background: linear-gradient(180deg, rgba(255,45,70,.16), rgba(255,45,70,.05)) !important;
+          box-shadow: inset 0 0 18px rgba(255,45,70,.06) !important;
+        }
+        .app .sidebar .nav-item.active svg { filter: drop-shadow(0 0 8px rgba(255,55,80,.28)); }
+
+        .app .topbar {
+          position: sticky !important;
+          top: 0 !important;
+          z-index: 10040 !important;
+          width: 100% !important;
+          min-height: 62px !important;
+          height: auto !important;
+          padding: 8px 9px !important;
+          gap: 8px !important;
+          overflow: hidden !important;
+          backdrop-filter: blur(16px) !important;
+          -webkit-backdrop-filter: blur(16px) !important;
+        }
+        .app .topbar > .icon-btn { flex: 0 0 38px !important; width: 38px !important; height: 38px !important; }
+        .app .topbar .sessionbar { flex: 1 1 auto !important; min-width: 0 !important; width: auto !important; gap: 5px !important; overflow: hidden !important; }
+        .app .topbar .session-title { display: none !important; }
+        .app .topbar .sessions { min-width: 0 !important; gap: 3px !important; overflow: hidden !important; }
+        .app .topbar .session { padding: 6px 7px !important; font-size: 9px !important; border-radius: 8px !important; white-space: nowrap !important; }
+        .app .topbar .clock { flex: 0 0 auto !important; font-size: 12px !important; white-space: nowrap !important; }
+        .app .top-actions { flex: 0 0 auto !important; gap: 6px !important; }
+        .app .top-actions .profile { gap: 0 !important; }
+        .app .top-actions .profile span { display: none !important; }
+        .app .top-actions .avatar, .app .top-actions .top-avatar-img { width: 34px !important; height: 34px !important; }
+        .app .top-actions .theme-toggle, .app .top-actions .theme-btn { width: 38px !important; height: 38px !important; }
+
+        .app .content {
+          width: 100% !important;
+          max-width: 100% !important;
+          min-width: 0 !important;
+          margin: 0 !important;
+          padding: 12px 10px calc(84px + env(safe-area-inset-bottom)) !important;
+          overflow-x: hidden !important;
+        }
+        .app .predator-page-frame,
+        .app .predator-content-wrap { width: 100% !important; max-width: 100% !important; min-width: 0 !important; }
+
+        /* Common responsive grids used by the existing desktop pages. */
+        .btc-report-v2, .pred-portfolio-page { width: 100% !important; max-width: 100% !important; min-width: 0 !important; }
+        .btc-main-grid, .btc-bottom-grid, .pred-main-grid { grid-template-columns: 1fr !important; }
+        .btc-top-stats { grid-template-columns: 1fr 1fr !important; }
+        .btc-metric-grid { grid-template-columns: 1fr 1fr !important; }
+        .btc-cycle-map { grid-template-columns: 1fr 1fr !important; }
+        .btc-chart-footer { grid-template-columns: 1fr !important; }
+        .pred-stat-grid { grid-template-columns: 1fr 1fr !important; }
+        .pred-form-grid { grid-template-columns: 1fr !important; }
+        .pred-note-grid, .pred-mini-grid { grid-template-columns: 1fr !important; }
+        .pred-donut-wrap { grid-template-columns: 1fr !important; }
+        .pred-pnl-row { grid-template-columns: 76px minmax(0,1fr) auto !important; }
+        .pred-holdings-head { flex-direction: column !important; align-items: stretch !important; }
+        .pred-holdings-tools { width: 100% !important; flex-wrap: wrap !important; }
+        .pred-search { min-width: 0 !important; width: 100% !important; flex: 1 1 100% !important; }
+        .pred-tabs { width: 100% !important; max-width: 100% !important; overflow-x: auto !important; }
+        .pred-tab { min-width: 104px !important; }
+
+        /* Calculator has inline desktop grid styles, so override them only on mobile. */
+        .page > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; width: 100% !important; min-width: 0 !important; }
+        .page .form-grid { grid-template-columns: 1fr 1fr !important; }
+        .calculator-key { min-height: 54px !important; }
+
+        /* Keep wide data tables usable without shrinking the entire app. */
+        .pred-table-wrap, .btc-table-wrap { max-width: 100% !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; }
+        .pred-table { min-width: 980px !important; }
+        .btc-signal-table { min-width: 760px !important; }
+
+        /* Volume Spike: keep controls readable and let the table scroll horizontally. */
+        .volume-spike-page, .volume-spike-container { width: 100% !important; max-width: 100% !important; min-width: 0 !important; }
+
+        /* Touch targets and modal widths. */
+        .app button, .app input, .app select { touch-action: manipulation; }
+        .app [role="dialog"] { max-width: calc(100vw - 20px) !important; }
+      }
+
     `}</style>
     {navigationBusy ? <div className="predator-route-indicator" aria-hidden="true" /> : null}
     <aside className="sidebar"><div onClick={()=>navigateTo("Dashboard")} className="logo-link" role="button" tabIndex={0}><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>navigateTo(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
