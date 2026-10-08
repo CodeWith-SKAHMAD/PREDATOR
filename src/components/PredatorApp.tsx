@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentType, ReactNode, CSSProperties, ChangeEvent, MouseEvent } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
-  BarChart3, Calculator as CalculatorIcon, ChevronRight, Clock3,
-  LayoutDashboard, LogOut, Moon, Newspaper, PanelLeft, RefreshCw, Settings,
-  Sun, Wallet, Zap, Plus, Trash2, Search, CircleDollarSign
+  Activity, BarChart3, Bell, BrainCircuit, Calculator as CalculatorIcon, ChevronRight, Clock3,
+  Gauge, LayoutDashboard, Layers3, LogOut, Moon, Newspaper, PanelLeft, RefreshCw, Settings,
+  ShieldAlert, SlidersHorizontal, Sun, Target, TrendingDown, TrendingUp, Wallet, Zap, Plus, Trash2, Search, CircleDollarSign, Info, X, Check
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import CoinChart from "@/components/CoinChart";
@@ -736,6 +736,14 @@ function Dashboard({
           </div>
         )}
       </Card>
+
+      <PredatorIntelligence
+        market={market}
+        liveSignals={liveSignals}
+        volumeRows={volumeRows}
+        go={go}
+        onCoinClick={onCoinClick}
+      />
     </div>
   );
 }
@@ -757,6 +765,7 @@ type CompactSignalCardProps = {
   capturedAt?: string;
   expired?: boolean;
   onClick: () => void;
+  onInfoClick?: () => void;
 };
 
 function CompactCoinIcon({ baseAsset }: { baseAsset: string }) {
@@ -822,6 +831,7 @@ function CompactSignalCard({
   capturedAt,
   expired = false,
   onClick,
+  onInfoClick,
 }: CompactSignalCardProps) {
   const scorePercent = Math.max(0, Math.min(100, (score / 150) * 100));
   const accent = direction === "LONG" ? "#10e7a0" : "#ff596d";
@@ -881,6 +891,34 @@ function CompactSignalCard({
 
       <div style={{ position: "relative" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          {onInfoClick && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label={`View ${baseAsset} signal analysis`}
+              title="View signal analysis"
+              onClick={(event) => { event.stopPropagation(); onInfoClick(); }}
+              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onInfoClick(); } }}
+              style={{
+                position: "absolute",
+                top: 0,
+                right: 0,
+                width: 30,
+                height: 30,
+                borderRadius: 9,
+                border: "1px solid rgba(160,190,220,.18)",
+                background: "rgba(5,10,15,.62)",
+                color: "#b9c7d3",
+                display: "grid",
+                placeItems: "center",
+                cursor: "pointer",
+                zIndex: 5,
+                backdropFilter: "blur(8px)",
+              }}
+            >
+              <Info size={15} />
+            </span>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
             <CompactCoinIcon baseAsset={baseAsset} />
             <div style={{ minWidth: 0 }}>
@@ -997,6 +1035,235 @@ function CompactSignalCard({
 }
 
 
+
+function SignalAnalysisModal({
+  signal,
+  onClose,
+}: {
+  signal: {
+    symbol: string;
+    baseAsset: string;
+    direction: "LONG" | "SHORT" | "NEUTRAL";
+    score: number;
+    status: string;
+    triggerPrice: number;
+    tools: Record<string, { score: number; label: string }>;
+    reasons: string[];
+  };
+  onClose: () => void;
+}) {
+  const toolOrder = [
+    "Volume Spike", "EMA Trend", "VWAP", "RSI", "MACD", "Breakout",
+    "Market Structure", "BTC Confirmation", "Liquidity", "ATR",
+    "Support/Resistance", "Trend Strength", "Momentum Alignment",
+    "Market Regime", "Volume Pressure",
+  ];
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const findTool = (label: string) => {
+    const target = normalize(label);
+    const entry = Object.entries(signal.tools || {}).find(([key, value]) => {
+      const normalizedKey = normalize(key);
+      const normalizedLabel = normalize(value?.label || key);
+      return normalizedKey === target || normalizedLabel === target || normalizedKey.includes(target) || target.includes(normalizedKey) || normalizedLabel.includes(target) || target.includes(normalizedLabel);
+    });
+    return entry?.[1] || null;
+  };
+  const accent = signal.direction === "LONG" ? "#16e7a0" : signal.direction === "SHORT" ? "#ff596d" : "#b6c4d0";
+  const scoreStatus = signal.score >= 110 ? "#16e7a0" : signal.score >= 100 ? "#ffd166" : "#9eb0c0";
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label={`${signal.baseAsset} signal analysis`} onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }} style={{ position: "fixed", inset: 0, zIndex: 100, display: "grid", placeItems: "center", padding: 18, background: "rgba(0,0,0,.78)", backdropFilter: "blur(12px)" }}>
+      <div style={{ width: "min(660px, 100%)", maxHeight: "min(84vh, 820px)", overflow: "auto", borderRadius: 20, border: `1px solid ${accent}38`, background: "linear-gradient(150deg, rgba(11,17,24,.98), rgba(3,8,12,.99))", boxShadow: `0 30px 80px rgba(0,0,0,.58), 0 0 45px ${signal.direction === "LONG" ? "rgba(22,231,160,.08)" : "rgba(255,89,109,.08)"}`, padding: 18 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <div style={{ color: "#7f8b98", fontSize: 10, letterSpacing: ".12em", fontWeight: 800 }}>SIGNAL ANALYSIS</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 5, flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 22 }}>{signal.baseAsset}</strong>
+              <span style={{ color: "#778490", fontSize: 11 }}>/ USDT</span>
+              <span style={{ color: accent, fontWeight: 900, fontSize: 11 }}>{signal.direction}</span>
+              <span style={{ color: scoreStatus, fontWeight: 800, fontSize: 11 }}>{signal.status}</span>
+            </div>
+            <div className="mono" style={{ marginTop: 7, fontSize: 16, color: "#e9f0f5", fontWeight: 800 }}>{formatPrice(signal.triggerPrice)}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="mono" style={{ width: 66, height: 66, borderRadius: 18, display: "grid", placeItems: "center", border: `1px solid ${accent}55`, background: signal.direction === "LONG" ? "rgba(22,231,160,.07)" : "rgba(255,89,109,.07)", color: accent, fontSize: 19, fontWeight: 900 }}>{signal.score}/150</div>
+            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close analysis"><X size={17} /></button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: "grid", gap: 7 }}>
+          {toolOrder.map((label) => {
+            const result = findTool(label);
+            const score = typeof result?.score === "number" ? result.score : null;
+            const active = score !== null && score >= 7;
+            return (
+              <div key={label} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 11, border: "1px solid rgba(255,255,255,.065)", background: active ? "rgba(22,231,160,.045)" : "rgba(255,255,255,.018)" }}>
+                <span style={{ fontSize: 12, color: "#dbe4eb" }}>{label}</span>
+                <span style={{ fontSize: 10, color: "#7d8995", textTransform: "uppercase" }}>{result?.label || (score !== null ? "Confirmed" : "N/A")}</span>
+                <span className="mono" style={{ minWidth: 46, textAlign: "right", color: score !== null ? (score >= 8 ? "#31efb3" : score >= 5 ? "#ffd166" : "#ff7180") : "#7c8995", fontWeight: 900, fontSize: 12 }}>
+                  {score !== null ? `${score}/10` : "N/A"}{score !== null && score >= 8 ? <Check size={13} style={{ marginLeft: 4, verticalAlign: "-2px" }} /> : null}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {signal.reasons?.length ? (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,.07)" }}>
+            <div style={{ color: "#7f8b98", fontSize: 10, letterSpacing: ".1em", fontWeight: 800, marginBottom: 8 }}>WHY THIS SIGNAL</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {signal.reasons.slice(0, 4).map((reason, index) => (
+                <div key={`${reason}-${index}`} style={{ display: "flex", gap: 8, color: "#aab7c3", fontSize: 11, lineHeight: 1.45 }}>
+                  <span style={{ color: accent, fontWeight: 900 }}>•</span><span>{reason}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PredatorIntelligence({
+  market,
+  liveSignals,
+  volumeRows,
+  go,
+  onCoinClick,
+}: {
+  market: MarketResponse | null;
+  liveSignals: DashboardSignal[];
+  volumeRows: DashboardVolume[];
+  go: (t: Tab) => void;
+  onCoinClick: (symbol: string) => void;
+}) {
+  const [alertEnabled, setAlertEnabled] = useState(false);
+  const [notificationState, setNotificationState] = useState<"off" | "granted" | "denied">("off");
+  const alertedRef = useRef<Set<string>>(new Set());
+
+  const markets = market?.markets ?? [];
+  const priceMap = useMemo(() => new Map(markets.map((item) => [item.symbol, item])), [markets]);
+  const heatmap = useMemo(
+    () => [...markets].filter((item) => Number.isFinite(item.change24h)).sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h)).slice(0, 18),
+    [markets],
+  );
+  const liquidity = useMemo(
+    () => [...markets].filter((item) => Number.isFinite(item.quoteVolume24h)).sort((a, b) => b.quoteVolume24h - a.quoteVolume24h).slice(0, 6),
+    [markets],
+  );
+
+  const narrativeMap: Record<string, string[]> = {
+    AI: ["RENDERUSDT", "TAOUSDT", "FETUSDT", "NEARUSDT", "INJUSDT", "AKTUSDT"],
+    RWA: ["ONDOUSDT", "PENDLEUSDT", "OMUSDT", "CFGUSDT", "POLYXUSDT"],
+    DEFI: ["UNIUSDT", "AAVEUSDT", "MKRUSDT", "CRVUSDT", "COMPUSDT", "SNXUSDT"],
+    L1: ["ETHUSDT", "SOLUSDT", "AVAXUSDT", "SUIUSDT", "ADAUSDT", "SEIUSDT", "APTUSDT"],
+    MEME: ["DOGEUSDT", "SHIBUSDT", "PEPEUSDT", "WIFUSDT", "BONKUSDT", "FLOKIUSDT"],
+    GAMING: ["IMXUSDT", "GALAUSDT", "SANDUSDT", "MANAUSDT", "RONUSDT", "BEAMXUSDT"],
+  };
+
+  const narratives = Object.entries(narrativeMap).map(([name, symbols]) => {
+    const matched = symbols.map((symbol) => priceMap.get(symbol)).filter(Boolean) as MarketItem[];
+    const avg = matched.length ? matched.reduce((sum, item) => sum + item.change24h, 0) / matched.length : null;
+    return { name, avg, count: matched.length };
+  }).filter((item) => item.count > 0).sort((a, b) => (b.avg ?? -Infinity) - (a.avg ?? -Infinity));
+
+  const topSignal = [...liveSignals].sort((a, b) => b.score - a.score)[0] ?? null;
+  const topVolume = [...volumeRows].sort((a, b) => b.spike - a.spike)[0] ?? null;
+  const btc = market?.btc ?? null;
+  const riskOn = btc ? btc.change24h >= 1.5 : false;
+  const riskOff = btc ? btc.change24h <= -1.5 : false;
+
+  const alerts = useMemo(() => {
+    const next: Array<{ id: string; title: string; body: string; tone: "green" | "red" | "yellow"; action?: () => void }> = [];
+    if (topSignal && topSignal.score >= 110) {
+      next.push({ id: `signal-${topSignal.symbol}-${topSignal.score}`, title: `${topSignal.baseAsset} ${topSignal.direction} signal`, body: `${topSignal.score}/150 · ${topSignal.status}`, tone: topSignal.direction === "LONG" ? "green" : "red", action: () => go("Signal") });
+    }
+    if (topVolume && topVolume.spike >= 2.5) {
+      next.push({ id: `volume-${topVolume.symbol}-${topVolume.spike.toFixed(1)}`, title: `${topVolume.symbol.replace("USDT", "")} volume spike`, body: `${topVolume.spike.toFixed(1)}× average volume · ${topVolume.level}`, tone: "yellow", action: () => go("Volume Spike") });
+    }
+    if (btc && Math.abs(btc.change24h) >= 2) {
+      next.push({ id: `btc-${Math.sign(btc.change24h)}-${Math.round(btc.change24h * 10)}`, title: `BTC ${btc.change24h >= 0 ? "momentum" : "risk"} alert`, body: `24H move ${formatPct(btc.change24h)}`, tone: btc.change24h >= 0 ? "green" : "red", action: () => onCoinClick("BTCUSDT") });
+    }
+    return next;
+  }, [btc, go, onCoinClick, topSignal, topVolume]);
+
+  useEffect(() => {
+    try { setAlertEnabled(localStorage.getItem("predator-smart-alerts") === "1"); } catch { setAlertEnabled(false); }
+  }, []);
+
+  useEffect(() => {
+    if (!alertEnabled || typeof window === "undefined" || !("Notification" in window)) return;
+    const state = Notification.permission === "granted" ? "granted" : Notification.permission === "denied" ? "denied" : "off";
+    setNotificationState(state);
+    if (state !== "granted") return;
+    alerts.forEach((alert) => {
+      if (alertedRef.current.has(alert.id)) return;
+      alertedRef.current.add(alert.id);
+      try { new Notification(`PREDATOR · ${alert.title}`, { body: alert.body }); } catch {}
+    });
+  }, [alertEnabled, alerts]);
+
+  const toggleAlerts = async () => {
+    if (!alertEnabled) {
+      try { localStorage.setItem("predator-smart-alerts", "1"); } catch {}
+      setAlertEnabled(true);
+      if (typeof window !== "undefined" && "Notification" in window) {
+        try {
+          const permission = await Notification.requestPermission();
+          setNotificationState(permission === "granted" ? "granted" : permission === "denied" ? "denied" : "off");
+        } catch { setNotificationState("off"); }
+      }
+    } else {
+      try { localStorage.setItem("predator-smart-alerts", "0"); } catch {}
+      setAlertEnabled(false);
+      setNotificationState("off");
+    }
+  };
+
+  const heatColor = (change: number) => {
+    const strength = Math.min(0.78, 0.08 + Math.abs(change) / 12);
+    return change >= 0 ? `rgba(16,231,160,${strength})` : `rgba(255,89,109,${strength})`;
+  };
+  const marketRead = !btc
+    ? "Waiting for live market data."
+    : riskOn
+      ? `Risk-on conditions: BTC is ${formatPct(btc.change24h)} over 24H. ${topSignal ? `${topSignal.baseAsset} has the strongest live signal at ${topSignal.score}/150.` : "No strong signal is currently leading."}`
+      : riskOff
+        ? `Risk-off conditions: BTC is ${formatPct(btc.change24h)} over 24H. Favor confirmation and liquidity over chasing moves.`
+        : `Balanced conditions: BTC is ${formatPct(btc.change24h)} over 24H. Watch volume expansion before taking directional risk.`;
+
+  return (
+    <div style={{ display: "grid", gap: 14, marginTop: 14 }}>
+      <Card>
+        <div className="card-head"><div><span className="label">PREDATOR INTELLIGENCE</span><h2>Market command center</h2></div><span className="muted" style={{ fontSize: 10 }}>LIVE · DATA-DRIVEN</span></div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.45fr) minmax(280px,.8fr)", gap: 12 }}>
+          <div style={{ padding: 14, borderRadius: 14, border: "1px solid rgba(255,255,255,.06)", background: "linear-gradient(145deg,rgba(255,255,255,.025),rgba(255,255,255,.008))" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 7 }}><BrainCircuit size={17} style={{ color: "#ff4b63" }} /><span className="label">MARKET READ</span></div>
+            <p style={{ margin: 0, color: "#c3ced8", fontSize: 13, lineHeight: 1.6 }}>{marketRead}</p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}><span className="chip active">{btc ? `BTC ${formatPct(btc.change24h)}` : "BTC —"}</span><span className="chip">Signals {liveSignals.length}</span><span className="chip">Spikes {volumeRows.length}</span></div>
+          </div>
+          <div style={{ padding: 14, borderRadius: 14, border: "1px solid rgba(255,255,255,.06)", background: "rgba(255,255,255,.015)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Bell size={15} /><span className="label">SMART ALERTS</span></div><button type="button" className="glass-btn" onClick={toggleAlerts} style={{ padding: "6px 9px", fontSize: 10 }}>{alertEnabled ? "Enabled" : "Enable"}</button></div>
+            <div className="muted" style={{ marginTop: 9, fontSize: 10 }}>{notificationState === "granted" ? "Browser notifications enabled." : alertEnabled ? (notificationState === "denied" ? "Browser notification permission was denied." : "Waiting for browser permission.") : "Get a browser alert for strong signals, volume spikes and BTC moves."}</div>
+            <div style={{ display: "grid", gap: 7, marginTop: 10 }}>{alerts.length ? alerts.slice(0, 3).map((alert) => <button key={alert.id} type="button" onClick={alert.action} style={{ textAlign: "left", padding: "8px 10px", borderRadius: 10, border: "1px solid rgba(255,255,255,.06)", background: alert.tone === "green" ? "rgba(16,231,160,.055)" : alert.tone === "red" ? "rgba(255,89,109,.05)" : "rgba(255,209,102,.05)", color: "inherit", cursor: "pointer" }}><b style={{ display: "block", fontSize: 11 }}>{alert.title}</b><span className="muted" style={{ fontSize: 9 }}>{alert.body}</span></button>) : <span className="muted" style={{ fontSize: 10 }}>No active high-priority alerts.</span>}</div>
+          </div>
+        </div>
+      </Card>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.35fr) minmax(0,1fr)", gap: 14 }}>
+        <Card><div className="card-head"><div><span className="label">MARKET HEATMAP</span><h2>Fastest movers</h2></div><Activity size={16} /></div><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(90px,1fr))", gap: 7 }}>{heatmap.length ? heatmap.map((item) => <button key={item.symbol} type="button" onClick={() => onCoinClick(item.symbol)} style={{ padding: "10px 8px", borderRadius: 11, border: `1px solid ${item.change24h >= 0 ? "rgba(16,231,160,.18)" : "rgba(255,89,109,.18)"}`, background: heatColor(item.change24h), color: "#eef3f7", cursor: "pointer", textAlign: "left" }}><b style={{ display: "block", fontSize: 11 }}>{item.symbol.replace("USDT", "")}</b><span className="mono" style={{ display: "block", marginTop: 4, fontSize: 10 }}>{formatPct(item.change24h)}</span></button>) : <span className="muted">No live heatmap data.</span>}</div></Card>
+        <Card><div className="card-head"><div><span className="label">NARRATIVE SCANNER</span><h2>Sector pulse</h2></div><Layers3 size={16} /></div><div style={{ display: "grid", gap: 8 }}>{narratives.length ? narratives.slice(0, 6).map((item) => <div key={item.name} style={{ display: "grid", gridTemplateColumns: "70px 1fr auto", alignItems: "center", gap: 8 }}><b style={{ fontSize: 11 }}>{item.name}</b><div style={{ height: 7, borderRadius: 999, background: "rgba(255,255,255,.06)", overflow: "hidden" }}><div style={{ width: `${Math.min(100, Math.max(8, 50 + (item.avg ?? 0) * 9))}%`, height: "100%", borderRadius: 999, background: item.avg != null && item.avg >= 0 ? "#1ee6ad" : "#ff5f72" }} /></div><span className={item.avg != null && item.avg >= 0 ? "up" : "down"}>{item.avg == null ? "—" : formatPct(item.avg)}</span></div>) : <span className="muted">No mapped narrative data available.</span>}</div><p className="muted" style={{ margin: "10px 0 0", fontSize: 9 }}>Sector averages use only live coins present in the market feed.</p></Card>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 14 }}>
+        <Card><div className="card-head"><div><span className="label">LIQUIDITY INTELLIGENCE</span><h2>Highest 24H quote flow</h2></div><Gauge size={16} /></div><div style={{ display: "grid", gap: 8 }}>{liquidity.length ? liquidity.map((item) => <button key={item.symbol} type="button" onClick={() => onCoinClick(item.symbol)} style={{ display: "grid", gridTemplateColumns: "1fr auto auto", alignItems: "center", gap: 10, textAlign: "left", padding: "8px 0", border: 0, borderBottom: "1px solid rgba(255,255,255,.05)", background: "transparent", color: "inherit", cursor: "pointer" }}><span><b>{item.symbol.replace("USDT", "")}</b><span className="muted" style={{ display: "block", fontSize: 9 }}>{formatPct(item.change24h)} · {formatCompactUsd(item.quoteVolume24h)}</span></span><span className="mono" style={{ fontSize: 10 }}>{formatCompactUsd(item.quoteVolume24h)}</span><span style={{ color: item.change24h >= 0 ? "#57efba" : "#ff7181" }}>{item.change24h >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}</span></button>) : <span className="muted">Liquidity feed unavailable.</span>}</div><div style={{ marginTop: 10, paddingTop: 9, borderTop: "1px solid rgba(255,255,255,.06)" }}><span className="muted" style={{ fontSize: 9 }}><ShieldAlert size={11} style={{ verticalAlign: "-2px", marginRight: 4 }} /> Whale transfer data is not connected here, so no whale flow is fabricated.</span></div></Card>
+        <Card><div className="card-head"><div><span className="label">OPPORTUNITY RADAR</span><h2>Best current setups</h2></div><Target size={16} /></div>{liveSignals.length ? [...liveSignals].sort((a, b) => b.score - a.score).slice(0, 5).map((signal) => <button key={signal.symbol} type="button" onClick={() => onCoinClick(signal.symbol)} style={{ width: "100%", display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center", gap: 10, textAlign: "left", padding: "9px 0", border: 0, borderBottom: "1px solid rgba(255,255,255,.05)", background: "transparent", color: "inherit", cursor: "pointer" }}><span><b>{signal.baseAsset}</b><span className="muted" style={{ display: "block", fontSize: 9 }}>{signal.direction} · {signal.status}</span></span><strong className="mono" style={{ color: signal.score >= 110 ? "#1fe5ad" : "#ffd166" }}>{signal.score}/150</strong></button>) : <span className="muted">No live opportunities right now.</span>}</Card>
+      </div>
+    </div>
+  );
+}
+
 function Signals({
   user,
   onCoinClick,
@@ -1087,6 +1354,7 @@ function Signals({
   const [historyLoading, setHistoryLoading] = useState(true);
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
+  const [detailsSignal, setDetailsSignal] = useState<SignalRow | null>(null);
   const [last, setLast] = useState<Date | null>(null);
   const [nextScanAt, setNextScanAt] = useState<number | null>(null);
   const [seconds, setSeconds] = useState(0);
@@ -1355,7 +1623,9 @@ function Signals({
   );
 
   return (
-    <div className="page">
+    <>
+      {detailsSignal ? <SignalAnalysisModal signal={detailsSignal} onClose={() => setDetailsSignal(null)} /> : null}
+      <div className="page">
       <div className="page-head">
         <div>
           <h1>Live Signals</h1>
@@ -1546,6 +1816,7 @@ function Signals({
                     fundingRate={signal.fundingRate}
                     capturedAt={signal.capturedAt}
                     onClick={() => onCoinClick(signal.symbol)}
+                    onInfoClick={() => setDetailsSignal(signal)}
                   />
                 ))}
               </div>
@@ -1595,6 +1866,7 @@ function Signals({
               </div>
             ) : (
               <>
+                <SignalHistoryAnalytics history={history} />
                 <section
                   style={{
                     marginBottom: archiveMonths.length > 0 ? 26 : 0,
@@ -1758,9 +2030,86 @@ function Signals({
           </Card>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }
+function SignalHistoryAnalytics({
+  history,
+}: {
+  history: Array<{
+    id: number;
+    window_id: number;
+    symbol: string;
+    direction: "LONG" | "SHORT";
+    score: number;
+    status: string;
+    price: number | null;
+    signal_time: string;
+    expires_at: string | null;
+    volume_spike: number | null;
+    rsi: number | null;
+    tool_scores: Record<string, unknown> | null;
+    reason: string | null;
+  }>;
+}) {
+  const [filterScore, setFilterScore] = useState(100);
+  const [directionFilter, setDirectionFilter] = useState<"ALL" | "LONG" | "SHORT">("ALL");
+  const [results, setResults] = useState<Array<{ id: number; symbol: string; direction: "LONG" | "SHORT"; score: number; ret: number }>>([]);
+  const [loading, setLoading] = useState(false);
+  const runRef = useRef(0);
+  const candidates = useMemo(() => history.filter((row) => row.price && row.expires_at && row.score >= filterScore && (directionFilter === "ALL" || row.direction === directionFilter)).sort((a, b) => new Date(b.signal_time).getTime() - new Date(a.signal_time).getTime()).slice(0, 24), [history, filterScore, directionFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const runId = ++runRef.current;
+    const load = async () => {
+      if (!candidates.length) { setResults([]); setLoading(false); return; }
+      setLoading(true);
+      const out: Array<{ id: number; symbol: string; direction: "LONG" | "SHORT"; score: number; ret: number }> = [];
+      for (let i = 0; i < candidates.length; i += 4) {
+        const batch = candidates.slice(i, i + 4);
+        const batchResults = await Promise.all(batch.map(async (row) => {
+          try {
+            const expiry = new Date(row.expires_at as string).getTime();
+            const data = await fetchJsonWithFallback<any>([
+              `https://data-api.binance.vision/api/v3/klines?symbol=${encodeURIComponent(row.symbol)}&interval=1m&startTime=${expiry - 180000}&endTime=${expiry + 180000}&limit=7`,
+              `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(row.symbol)}&interval=1m&startTime=${expiry - 180000}&endTime=${expiry + 180000}&limit=7`,
+            ]);
+            if (!Array.isArray(data) || !data.length) return null;
+            const closest = data.reduce((best: any[], item: any[]) => Math.abs(Number(item[0]) - expiry) < Math.abs(Number(best?.[0] ?? expiry) - expiry) ? item : best, data[0]);
+            const exitPrice = Number(closest?.[4]);
+            const entryPrice = Number(row.price);
+            if (!Number.isFinite(exitPrice) || !Number.isFinite(entryPrice) || entryPrice <= 0) return null;
+            const ret = row.direction === "LONG" ? ((exitPrice - entryPrice) / entryPrice) * 100 : ((entryPrice - exitPrice) / entryPrice) * 100;
+            return { id: row.id, symbol: row.symbol, direction: row.direction, score: row.score, ret };
+          } catch { return null; }
+        }));
+        batchResults.forEach((item) => { if (item) out.push(item); });
+        if (cancelled || runId !== runRef.current) return;
+      }
+      if (!cancelled && runId === runRef.current) { setResults(out); setLoading(false); }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [candidates]);
+
+  const wins = results.filter((item) => item.ret > 0).length;
+  const winRate = results.length ? (wins / results.length) * 100 : 0;
+  const avgReturn = results.length ? results.reduce((sum, item) => sum + item.ret, 0) / results.length : 0;
+  const best = results.length ? Math.max(...results.map((item) => item.ret)) : 0;
+  const worst = results.length ? Math.min(...results.map((item) => item.ret)) : 0;
+
+  return (
+    <Card style={{ marginBottom: 14 }}>
+      <div className="card-head"><div><span className="label">SIGNAL HISTORY ANALYTICS</span><h2>Outcome lab / backtest</h2></div><Gauge size={16} /></div>
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}><span className="muted" style={{ fontSize: 10 }}>Minimum score</span>{[80, 100, 110, 120].map((score) => <button key={score} type="button" className={filterScore === score ? "chip active" : "chip"} onClick={() => setFilterScore(score)}>{score}+</button>)}<span className="muted" style={{ fontSize: 10, marginLeft: 5 }}>Direction</span>{(["ALL","LONG","SHORT"] as const).map((dir) => <button key={dir} type="button" className={directionFilter === dir ? "chip active" : "chip"} onClick={() => setDirectionFilter(dir)}>{dir}</button>)}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8 }}>{[["WIN RATE", results.length ? `${winRate.toFixed(1)}%` : "—", winRate >= 55 ? "up" : "muted"],["AVG RETURN", results.length ? `${avgReturn >= 0 ? "+" : ""}${avgReturn.toFixed(2)}%` : "—", avgReturn >= 0 ? "up" : "down"],["BEST", results.length ? `+${best.toFixed(2)}%` : "—", "up"],["WORST", results.length ? `${worst.toFixed(2)}%` : "—", "down"]].map(([label, value, tone]) => <div key={String(label)} className="glass-card" style={{ padding: "11px 12px", background: "rgba(255,255,255,.016)" }}><span className="label">{label}</span><strong className={String(tone)} style={{ display: "block", marginTop: 7, fontSize: 18 }}>{value}</strong></div>)}</div>
+      <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}><span className="muted" style={{ fontSize: 9 }}>{loading ? "Running historical outcome checks…" : `${results.length} recorded signals evaluated using actual market price near each expiry.`}</span><span className="muted" style={{ fontSize: 9 }}>{results.length ? "Historical only · not a future guarantee." : "Waiting for expired signal history."}</span></div>
+    </Card>
+  );
+}
+
 function HistorySignalStack({
   items,
   onCoinClick,
@@ -3160,53 +3509,53 @@ function CalculatorPage() {
 }
 function CoinDetails({ symbol, onClose }: { symbol: string; onClose: () => void }) {
   const title = symbol.replace("USDT", "/USDT");
+  const [quote, setQuote] = useState<MarketItem | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const data = await fetchJsonWithFallback<any>([
+          `/api/market?ts=${Date.now()}`,
+          `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
+        ]);
+        const marketItem = Array.isArray(data?.markets) ? data.markets.find((item: MarketItem) => item.symbol === symbol) : null;
+        if (active && marketItem) setQuote(marketItem);
+        if (active && !marketItem && data?.lastPrice) {
+          const price = Number(data.lastPrice);
+          setQuote({ symbol, price, change24h: Number(data.priceChangePercent) || 0, volume24h: Number(data.volume) || 0, quoteVolume24h: Number(data.quoteVolume) || 0, high24h: Number(data.highPrice) || 0, low24h: Number(data.lowPrice) || 0 });
+        }
+      } catch {
+        if (active) setQuote(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    const timer = window.setInterval(load, 30000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [symbol]);
+
+  const stats = [
+    { label: "LIVE PRICE", value: quote ? `$${formatPrice(quote.price)}` : "—", tone: "normal" },
+    { label: "24H CHANGE", value: quote ? formatPct(quote.change24h) : "—", tone: quote && quote.change24h >= 0 ? "up" : "down" },
+    { label: "24H HIGH", value: quote ? `$${formatPrice(quote.high24h)}` : "—", tone: "normal" },
+    { label: "24H LOW", value: quote ? `$${formatPrice(quote.low24h)}` : "—", tone: "normal" },
+    { label: "QUOTE VOLUME", value: quote ? formatCompactUsd(quote.quoteVolume24h) : "—", tone: "normal" },
+  ];
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 60,
-        padding: "18px",
-        background: "rgba(0,0,0,.82)",
-        backdropFilter: "blur(14px)",
-        overflow: "auto",
-      }}
-    >
-      <div
-        className="glass-card"
-        style={{
-          minHeight: "calc(100vh - 36px)",
-          maxWidth: "1500px",
-          margin: "0 auto",
-          background: "rgba(7,7,7,.94)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "12px",
-            marginBottom: "14px",
-          }}
-        >
-          <div>
-            <p className="eyebrow">COIN INTELLIGENCE</p>
-            <h1>{title}</h1>
-            <p className="muted">Interactive price chart</p>
-          </div>
-
-          <button
-            className="glass-btn"
-            onClick={onClose}
-            aria-label={`Close ${title} chart`}
-          >
-            <ChevronRight size={16} style={{ transform: "rotate(180deg)" }} />
-            Back
-          </button>
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, padding: 18, background: "rgba(0,0,0,.82)", backdropFilter: "blur(14px)", overflow: "auto" }}>
+      <div className="glass-card" style={{ minHeight: "calc(100vh - 36px)", maxWidth: 1500, margin: "0 auto", background: "rgba(7,7,7,.94)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+          <div><p className="eyebrow">COIN INTELLIGENCE</p><h1>{title}</h1><p className="muted">Live metrics + interactive price chart {loading ? "· Updating…" : "· LIVE"}</p></div>
+          <button className="glass-btn" onClick={onClose} aria-label={`Close ${title} chart`}><ChevronRight size={16} style={{ transform: "rotate(180deg)" }} /> Back</button>
         </div>
-
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 10, marginBottom: 14 }}>
+          {stats.map((stat) => <div key={stat.label} className="glass-card" style={{ minHeight: 82, padding: "12px 14px", background: "rgba(255,255,255,.018)" }}><span className="label">{stat.label}</span><strong className={stat.tone === "up" ? "up" : stat.tone === "down" ? "down" : "mono"} style={{ display: "block", marginTop: 8, fontSize: 17 }}>{stat.value}</strong></div>)}
+        </div>
         <CoinChart symbol={symbol} />
       </div>
     </div>
@@ -3367,6 +3716,7 @@ type WatchlistQuote = {
   change24h: number;
   high24h: number;
   low24h: number;
+  quoteVolume24h: number;
   updatedAt: number;
 };
 
@@ -3390,6 +3740,7 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState(0);
   const [hydrated, setHydrated] = useState(false);
+  const [watchFilter, setWatchFilter] = useState<"all" | "gainers" | "losers" | "volume">("all");
 
   useEffect(() => {
     try {
@@ -3459,6 +3810,7 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
             change24h: Number.isFinite(change24h) ? change24h : 0,
             high24h: Number.isFinite(high24h) ? high24h : 0,
             low24h: Number.isFinite(low24h) ? low24h : 0,
+            quoteVolume24h: Number.isFinite(Number(data?.quoteVolume)) ? Number(data?.quoteVolume) : 0,
             updatedAt: Date.now(),
           } as WatchlistQuote] as const;
         } catch {
@@ -3539,6 +3891,14 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
     });
   };
 
+  const visibleSymbols = [...symbols].filter((symbol) => {
+    const quote = quotes[symbol];
+    if (!quote) return watchFilter === "all";
+    if (watchFilter === "gainers") return quote.change24h > 0;
+    if (watchFilter === "losers") return quote.change24h < 0;
+    return true;
+  }).sort((a, b) => watchFilter === "volume" ? (quotes[b]?.quoteVolume24h ?? 0) - (quotes[a]?.quoteVolume24h ?? 0) : 0);
+
   return (
     <div className="page">
       <div className="page-head pred-watchlist-head">
@@ -3601,9 +3961,15 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
         {error ? <p className="pred-watchlist-error">{error}</p> : <p className="muted pred-watchlist-hint">Type a symbol and add it. Prices refresh automatically every 30 seconds.</p>}
       </Card>
 
+      <div style={{ display: "flex", gap: 7, flexWrap: "wrap", margin: "12px 0 4px" }}>
+        {([['all','All'],['gainers','Gainers'],['losers','Losers'],['volume','Volume']] as Array<[typeof watchFilter, string]>).map(([key, label]) => (
+          <button key={key} type="button" className={watchFilter === key ? "chip active" : "chip"} onClick={() => setWatchFilter(key)}><SlidersHorizontal size={12} /> {label}</button>
+        ))}
+      </div>
+
       <div className="pred-watchlist-grid">
         {loading && symbols.length > 0 ? (
-          symbols.map((symbol) => (
+          visibleSymbols.map((symbol) => (
             <Card key={symbol} className="pred-watchlist-card pred-watchlist-skeleton">
               <span className="label">{symbol.replace("USDT", "")}</span>
               <strong>Loading...</strong>
@@ -3617,7 +3983,7 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
             <span className="muted">Add your first coin above to start tracking live price.</span>
           </Card>
         ) : (
-          symbols.map((symbol) => {
+          visibleSymbols.map((symbol) => {
             const quote = quotes[symbol];
             const base = symbol.replace("USDT", "");
             const direction = priceDirection[symbol] || (quote && quote.change24h >= 0 ? "up" : "down");
