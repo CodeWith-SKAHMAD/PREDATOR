@@ -6,7 +6,7 @@ import type { User } from "@supabase/supabase-js";
 import {
   BarChart3, Calculator as CalculatorIcon, ChevronRight, Clock3,
   LayoutDashboard, LogOut, Moon, Newspaper, PanelLeft, RefreshCw, Settings,
-  Sun, Wallet, Zap, Plus, Trash2, Search
+  Sun, Wallet, Zap, Plus, Trash2, Search, CircleDollarSign
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import CoinChart from "@/components/CoinChart";
@@ -3379,7 +3379,12 @@ function normalizeWatchSymbol(value: string) {
 function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
   const [symbols, setSymbols] = useState<string[]>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
   const [quotes, setQuotes] = useState<Record<string, WatchlistQuote>>({});
+  const quotesRef = useRef<Record<string, WatchlistQuote>>({});
+  const [priceDirection, setPriceDirection] = useState<Record<string, "up" | "down" | "flat">>({});
   const [input, setInput] = useState("");
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [marketSymbols, setMarketSymbols] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -3403,6 +3408,29 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
     if (!hydrated) return;
     localStorage.setItem("predator-watchlist", JSON.stringify(symbols));
   }, [hydrated, symbols]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const info = await fetchJsonWithFallback<any>([
+          "https://data-api.binance.vision/api/v3/exchangeInfo",
+          "https://api.binance.com/api/v3/exchangeInfo",
+        ]);
+        const list = Array.isArray(info?.symbols)
+          ? info.symbols
+              .filter((item: any) => item?.status === "TRADING" && item?.quoteAsset === "USDT" && item?.baseAsset)
+              .map((item: any) => String(item.baseAsset).toUpperCase())
+              .filter((item: string, index: number, arr: string[]) => arr.indexOf(item) === index)
+              .sort()
+          : [];
+        if (!cancelled) setMarketSymbols(list);
+      } catch {
+        if (!cancelled) setMarketSymbols([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const loadQuotes = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true);
@@ -3439,7 +3467,18 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
       }));
 
       const next = Object.fromEntries(entries.filter((item): item is [string, WatchlistQuote] => item !== null));
+      const nextDirection: Record<string, "up" | "down" | "flat"> = {};
+      Object.entries(next).forEach(([symbol, quote]) => {
+        const previous = quotesRef.current[symbol]?.price;
+        if (Number.isFinite(previous)) {
+          nextDirection[symbol] = quote.price > Number(previous) ? "up" : quote.price < Number(previous) ? "down" : "flat";
+        } else {
+          nextDirection[symbol] = quote.change24h > 0 ? "up" : quote.change24h < 0 ? "down" : "flat";
+        }
+      });
+      quotesRef.current = next;
       setQuotes(next);
+      setPriceDirection(nextDirection);
       setLastUpdated(Date.now());
       const missing = symbols.filter((symbol) => !next[symbol]);
       if (missing.length) setError(`Could not load: ${missing.map((symbol) => symbol.replace("USDT", "")).join(", ")}`);
@@ -3490,6 +3529,12 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
     setQuotes((current) => {
       const next = { ...current };
       delete next[symbol];
+      quotesRef.current = next;
+      return next;
+    });
+    setPriceDirection((current) => {
+      const next = { ...current };
+      delete next[symbol];
       return next;
     });
   };
@@ -3514,11 +3559,40 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
             <Search size={16} />
             <input
               value={input}
-              onChange={(event) => setInput(event.target.value.toUpperCase())}
-              onKeyDown={(event) => { if (event.key === "Enter") addCoin(); }}
+              onFocus={() => setShowSuggestions(true)}
+              onChange={(event) => {
+                const value = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+                setInput(value);
+                const matches = value && marketSymbols.length
+                  ? marketSymbols.filter((symbol) => symbol.startsWith(value)).slice(0, 8)
+                  : [];
+                setSuggestions(matches);
+                setShowSuggestions(Boolean(value && matches.length));
+              }}
+              onKeyDown={(event) => { if (event.key === "Enter") addCoin(); if (event.key === "Escape") setShowSuggestions(false); }}
+              onBlur={() => window.setTimeout(() => setShowSuggestions(false), 140)}
               placeholder="Add coin — BTC, ETH, SOL, DOGE..."
               aria-label="Add coin to watchlist"
             />
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="pred-watchlist-suggestions">
+                {suggestions.map((symbol) => {
+                  const base = symbol.replace("USDT", "");
+                  return (
+                    <button
+                      key={symbol}
+                      type="button"
+                      className="pred-watchlist-suggestion"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => { setInput(base); setShowSuggestions(false); }}
+                    >
+                      <span className="pred-watchlist-suggestion-icon"><img src={`https://cdn.jsdelivr.net/gh/atomiclabs/cryptocurrency-icons@master/128/color/${base.toLowerCase()}.png`} alt="" onError={(event) => { event.currentTarget.style.display = "none"; }} /></span>
+                      <span>{base}</span><span className="muted">/ USDT</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <button className="glass-btn pred-watchlist-add-btn" onClick={addCoin} disabled={adding}>
             <Plus size={15} /> {adding ? "Checking..." : "Add coin"}
@@ -3546,10 +3620,12 @@ function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
           symbols.map((symbol) => {
             const quote = quotes[symbol];
             const base = symbol.replace("USDT", "");
+            const direction = priceDirection[symbol] || (quote && quote.change24h >= 0 ? "up" : "down");
             return (
-              <Card key={symbol} className="pred-watchlist-card">
+              <Card key={symbol} className={`pred-watchlist-card ${direction === "up" ? "price-up" : direction === "down" ? "price-down" : "price-flat"}`}>
                 <div className="pred-watchlist-card-top">
                   <button className="pred-watchlist-coin" onClick={() => onCoinClick(symbol)} title={`Open ${base} chart`}>
+                    <span className="pred-watchlist-icon"><img src={`https://cdn.jsdelivr.net/gh/atomiclabs/cryptocurrency-icons@master/128/color/${base.toLowerCase()}.png`} alt="" onError={(event) => { event.currentTarget.style.display = "none"; const fallback = event.currentTarget.nextElementSibling as HTMLElement | null; if (fallback) fallback.style.display = "block"; }} /><CircleDollarSign className="pred-watchlist-icon-fallback" size={20} /></span>
                     <span className="pred-watchlist-symbol">{base}</span>
                     <span className="pred-watchlist-pair">/ USDT</span>
                   </button>
@@ -3765,22 +3841,36 @@ export default function PredatorApp({ user }: { user: User }){
       .pred-live-dot { width: 7px; height: 7px; border-radius: 999px; background: #31e981; box-shadow: 0 0 12px rgba(49,233,129,.6); }
       .pred-watchlist-add-card { padding: 16px !important; margin-bottom: 14px; }
       .pred-watchlist-add-row { display:flex; gap:10px; align-items:center; }
-      .pred-watchlist-input-wrap { flex:1; min-width:0; display:flex; align-items:center; gap:9px; height:44px; padding:0 13px; border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.025); border-radius:12px; color:#788291; }
+      .pred-watchlist-input-wrap { position:relative; flex:1; min-width:0; display:flex; align-items:center; gap:9px; height:44px; padding:0 13px; border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.025); border-radius:12px; color:#788291; }
       .pred-watchlist-input-wrap input { flex:1; min-width:0; border:0; outline:0; background:transparent; color:#f4f5f7; font:inherit; font-size:13px; text-transform:uppercase; }
       .pred-watchlist-input-wrap input::placeholder { color:#5e6672; text-transform:none; }
+      .pred-watchlist-suggestions { position:absolute; left:0; right:0; top:calc(100% + 7px); z-index:80; padding:5px; border:1px solid rgba(255,255,255,.10); border-radius:12px; background:rgba(12,14,17,.98); box-shadow:0 16px 35px rgba(0,0,0,.42); backdrop-filter:blur(18px); }
+      .pred-watchlist-suggestion { width:100%; display:flex; align-items:center; gap:8px; padding:8px 9px; border:0; border-radius:8px; background:transparent; color:#eef1f5; cursor:pointer; text-align:left; font:inherit; font-size:11px; }
+      .pred-watchlist-suggestion:hover { background:rgba(255,255,255,.06); }
+      .pred-watchlist-suggestion-icon { width:20px; height:20px; display:grid; place-items:center; }
+      .pred-watchlist-suggestion-icon img { width:19px; height:19px; object-fit:contain; }
       .pred-watchlist-add-btn { height:44px; }
       .pred-watchlist-hint, .pred-watchlist-error { margin:9px 2px 0; font-size:10px; }
       .pred-watchlist-error { color:#ff6a79; }
       .pred-watchlist-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
       .pred-watchlist-card { position:relative; min-height:168px; padding:17px !important; overflow:hidden; }
-      .pred-watchlist-card::before { content:""; position:absolute; left:0; top:18px; bottom:18px; width:2px; border-radius:999px; background:linear-gradient(180deg, rgba(255,54,76,.95), rgba(255,54,76,.05)); }
+      .pred-watchlist-card::before { content:""; position:absolute; left:0; top:18px; bottom:18px; width:2px; border-radius:999px; transition:background .35s ease, box-shadow .35s ease, opacity .35s ease; }
+      .pred-watchlist-card.price-up::before { background:linear-gradient(180deg, rgba(52,235,137,.95), rgba(52,235,137,.08)); box-shadow:0 0 12px rgba(52,235,137,.18); }
+      .pred-watchlist-card.price-down::before { background:linear-gradient(180deg, rgba(255,64,86,.95), rgba(255,64,86,.08)); box-shadow:0 0 12px rgba(255,64,86,.14); }
+      .pred-watchlist-card.price-flat::before { background:linear-gradient(180deg, rgba(145,153,166,.55), rgba(145,153,166,.05)); }
       .pred-watchlist-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
       .pred-watchlist-coin { padding:0; border:0; background:none; color:inherit; display:flex; align-items:baseline; gap:5px; cursor:pointer; }
+      .pred-watchlist-icon { width:24px; height:24px; flex:0 0 24px; display:grid; place-items:center; color:#8c95a2; }
+      .pred-watchlist-icon img { width:22px; height:22px; object-fit:contain; }
+      .pred-watchlist-icon-fallback { display:none; }
       .pred-watchlist-symbol { font-family:var(--font-heading, inherit); font-size:18px; font-weight:800; letter-spacing:.04em; }
       .pred-watchlist-pair { color:#747d8a; font-size:10px; }
       .pred-watchlist-remove { width:30px; height:30px; display:grid; place-items:center; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.025); color:#7b8592; border-radius:9px; cursor:pointer; }
       .pred-watchlist-remove:hover { color:#ff6878; border-color:rgba(255,80,100,.35); }
-      .pred-watchlist-price { display:block; margin-top:21px; font-family:var(--font-data,ui-monospace); font-size:27px; letter-spacing:.02em; }
+      .pred-watchlist-price { display:block; margin-top:21px; font-family:var(--font-data,ui-monospace); font-size:27px; letter-spacing:.02em; transition:color .35s ease, text-shadow .35s ease, opacity .35s ease; }
+      .pred-watchlist-card.price-up .pred-watchlist-price { color:rgba(93,242,189,.92); text-shadow:0 0 18px rgba(49,233,129,.12); }
+      .pred-watchlist-card.price-down .pred-watchlist-price { color:rgba(255,106,121,.90); text-shadow:0 0 18px rgba(255,64,86,.10); }
+      .pred-watchlist-card.price-flat .pred-watchlist-price { color:#f4f5f7; }
       .pred-watchlist-meta { display:flex; gap:7px; align-items:center; margin-top:6px; font-family:var(--font-data,ui-monospace); font-size:11px; }
       .pred-watchlist-range { display:flex; justify-content:space-between; gap:12px; margin-top:17px; padding-top:11px; border-top:1px solid rgba(255,255,255,.06); color:#8f97a4; font-size:9px; font-family:var(--font-data,ui-monospace); }
       .pred-watchlist-empty { grid-column:1/-1; min-height:190px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; gap:7px; }
