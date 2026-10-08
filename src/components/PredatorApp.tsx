@@ -4449,6 +4449,229 @@ export default function PredatorApp({ user }: { user: User }){
         .app button, .app input, .app select { touch-action: manipulation; }
         .app [role="dialog"] { max-width: calc(100vw - 20px) !important; }
       }
+      /* PREDATOR theme contrast pass — presentation only */
+      html[data-theme="dark"] .app {
+        color-scheme: dark;
+        --bg: #070a0f;
+        --panel: rgba(15, 21, 30, .96);
+        --line: rgba(155, 178, 204, .20);
+        --text: #f2f6fb;
+        --muted: #afbdcf;
+        background: #070a0f !important;
+        color: #f0f5fb !important;
+      }
+      html[data-theme="dark"] .app .sidebar {
+        background: rgba(8, 12, 18, .98) !important;
+        border-color: rgba(155, 178, 204, .18) !important;
+      }
+      html[data-theme="dark"] .app .topbar {
+        background: rgba(8, 12, 18, .96) !important;
+        border-color: rgba(155, 178, 204, .18) !important;
+      }
+      html[data-theme="dark"] .app .glass-card {
+        background: linear-gradient(145deg, rgba(17, 24, 34, .97), rgba(10, 15, 22, .99)) !important;
+        border-color: rgba(151, 177, 205, .20) !important;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, .30), inset 0 1px 0 rgba(255, 255, 255, .035) !important;
+      }
+      html[data-theme="dark"] .app .muted,
+      html[data-theme="dark"] .app .user-mini span,
+      html[data-theme="dark"] .app .page-head .muted { color: #afbdcf !important; }
+      html[data-theme="dark"] .app .eyebrow,
+      html[data-theme="dark"] .app .label,
+      html[data-theme="dark"] .app .form-grid label { color: #a9b8ca !important; }
+      html[data-theme="dark"] .app th { color: #aebdce !important; }
+      html[data-theme="dark"] .app .chip,
+      html[data-theme="dark"] .app .text-btn { color: #d2dce8 !important; }
+      html[data-theme="dark"] .app .icon-btn,
+      html[data-theme="dark"] .app .glass-btn,
+      html[data-theme="dark"] .app .chip {
+        border-color: rgba(155, 178, 204, .22) !important;
+        background-color: rgba(255, 255, 255, .055) !important;
+      }
+      html[data-theme="dark"] .app input,
+      html[data-theme="dark"] .app select,
+      html[data-theme="dark"] .app textarea {
+        border-color: rgba(155, 178, 204, .26) !important;
+      }
+      html[data-theme="dark"] .app input::placeholder,
+      html[data-theme="dark"] .app textarea::placeholder { color: #8899ad !important; opacity: 1 !important; }
+      html[data-theme="dark"] .app .live-price-card {
+        background: linear-gradient(145deg, rgba(18, 25, 35, .98), rgba(9, 14, 21, .99)) !important;
+        border-color: rgba(155, 178, 204, .22) !important;
+      }
+      html[data-theme="dark"] .app .live-price-name { color: #a8b6c7 !important; }
+      html[data-theme="dark"] .app .live-price-bottom { color: #9eacbd !important; }
+      html[data-theme="dark"] .app .pred-watchlist-pair,
+      html[data-theme="dark"] .app .pred-watchlist-range { color: #a7b4c5 !important; }
+      html[data-theme="dark"] .app .pred-watchlist-card.price-flat .pred-watchlist-price { color: #f2f6fb !important; }
+      html[data-theme="dark"] .app .pred-portfolio-page {
+        --p-text: #eef5ff;
+        --p-muted: #a8bbd0;
+        --p-border: rgba(130, 174, 214, .27);
+        color: var(--p-text) !important;
+      }
+      html[data-theme="dark"] .app .btc-report-v2 {
+        --btc-muted: #a8bbcd;
+        --btc-border: rgba(73, 220, 210, .32);
+      }
+
+      html[data-theme="light"] .app {
+        color-scheme: light;
+        --bg: #f3f6fa;
+        --panel: #ffffff;
+        --line: rgba(31, 48, 70, .15);
+        --text: #172437;
+        --muted: #526277;
+        background: #f3f6fa !important;
+        color: #1b293b !important;
+      }
+      html[data-theme="light"] .app main { background: #f3f6fa !important; }
+      html[data-theme="light"] .app .sidebar {
+        background: rgba(250, 252, 255, .98) !important;
+        border-color: #d3dce7 !important;
+        box-shadow: 5px 0 24px rgba(24, 39, 59, .045) !important;
+      }
+      html[data-theme="light"] .app .topbar {
+        background: rgba(255, 255, 255, .97) !important;
+        border-color: #d7dfe9 !important;
+        box-shadow: 0 5px 22px rgba(24, 39, 59, .045) !important;
+      }
+      html[data-theme="light"] .app .content { color: #1b293b !important; }
+      html[data-theme="light"] .app .glass-card {
+        color: #1b293b !important;
+        background: linear-gradient(145deg, #ffffff, #f8fafd) !important;
+        border-color: #d3dce7 !important;
+        box-shadow: 0 10px 26px rgba(27, 44, 66, .075), inset 0 1px 0 rgba(255, 255, 255, .9) !important;
+      }
+      html[data-theme="light"] .app .page-head h1,
+      html[data-theme="light"] .app .page-head h2,
+      html[data-theme="light"] .app .page-head h3 { color: #172437 !important; }
+      html[data-theme="light"] .app .muted,
+      html[data-theme="light"] .app .user-mini span,
+      html[data-theme="light"] .app .page-head .muted { color: #526277 !important; }
+      html[data-theme="light"] .app .eyebrow,
+      html[data-theme="light"] .app .label,
+      html[data-theme="light"] .app .form-grid label { color: #4f6075 !important; }
+      html[data-theme="light"] .app .user-mini {
+        background: #ffffff !important;
+        border-color: #d3dce7 !important;
+      }
+      html[data-theme="light"] .app .user-mini b,
+      html[data-theme="light"] .app .profile span { color: #1b293b !important; }
+      html[data-theme="light"] .app .nav-item { color: #526277 !important; }
+      html[data-theme="light"] .app .nav-item:hover { background: #edf2f8 !important; color: #1b293b !important; }
+      html[data-theme="light"] .app .nav-item.active {
+        background: #fff0f2 !important;
+        border-color: #efb7c0 !important;
+        color: #b51f38 !important;
+        box-shadow: inset 3px 0 0 #dc2d48, 0 4px 12px rgba(220, 45, 72, .06) !important;
+      }
+      html[data-theme="light"] .app .icon-btn,
+      html[data-theme="light"] .app .glass-btn,
+      html[data-theme="light"] .app .chip {
+        color: #33445a !important;
+        background: #ffffff !important;
+        border-color: #cbd6e2 !important;
+        box-shadow: 0 2px 7px rgba(28, 44, 66, .035) !important;
+      }
+      html[data-theme="light"] .app .chip.active {
+        color: #a51f37 !important;
+        background: #fff0f2 !important;
+        border-color: #efb7c0 !important;
+      }
+      html[data-theme="light"] .app .text-btn { color: #465970 !important; }
+      html[data-theme="light"] .app th { color: #465970 !important; }
+      html[data-theme="light"] .app td { border-color: #e0e6ee !important; }
+      html[data-theme="light"] .app .row,
+      html[data-theme="light"] .app .signal-row,
+      html[data-theme="light"] .app .setting-row { border-color: #dfe6ee !important; }
+      html[data-theme="light"] .app input,
+      html[data-theme="light"] .app select,
+      html[data-theme="light"] .app textarea,
+      html[data-theme="light"] .app .form-grid input,
+      html[data-theme="light"] .app .form-grid select {
+        color: #172437 !important;
+        background: #ffffff !important;
+        border-color: #c7d3e0 !important;
+        box-shadow: inset 0 1px 2px rgba(25, 43, 65, .025) !important;
+      }
+      html[data-theme="light"] .app input::placeholder,
+      html[data-theme="light"] .app textarea::placeholder { color: #68788d !important; opacity: 1 !important; }
+      html[data-theme="light"] .app .live-price-card {
+        color: #172437 !important;
+        background: linear-gradient(145deg, #ffffff, #f2f6fb) !important;
+        border-color: #d0dbe7 !important;
+        box-shadow: 0 8px 22px rgba(27, 44, 66, .07) !important;
+      }
+      html[data-theme="light"] .app .live-price-name,
+      html[data-theme="light"] .app .live-price-bottom { color: #56677d !important; }
+      html[data-theme="light"] .app .live-price-card > strong { color: #172437 !important; }
+      html[data-theme="light"] .app .pred-watchlist-input-wrap {
+        background: #ffffff !important;
+        border-color: #c7d3e0 !important;
+        color: #526277 !important;
+      }
+      html[data-theme="light"] .app .pred-watchlist-input-wrap input {
+        background: transparent !important;
+        color: #172437 !important;
+        border: 0 !important;
+      }
+      html[data-theme="light"] .app .pred-watchlist-input-wrap input::placeholder { color: #68788d !important; }
+      html[data-theme="light"] .app .pred-watchlist-pair,
+      html[data-theme="light"] .app .pred-watchlist-range { color: #526277 !important; }
+      html[data-theme="light"] .app .pred-watchlist-price { text-shadow: none !important; }
+      html[data-theme="light"] .app .pred-watchlist-card.price-flat .pred-watchlist-price { color: #172437 !important; }
+      html[data-theme="light"] .app .pred-watchlist-remove {
+        color: #526277 !important;
+        background: #f4f7fb !important;
+        border-color: #d3dce7 !important;
+      }
+      html[data-theme="light"] .app .session-live-box,
+      html[data-theme="light"] .app .session-now-box { color: #172437 !important; }
+      html[data-theme="light"] .app .session-live-box { background: #ffffff !important; border-color: #d5dee8 !important; }
+      html[data-theme="light"] .app .session-live-box small,
+      html[data-theme="light"] .app .session-now-label { color: #526277 !important; }
+      html[data-theme="light"] .app .session-now-box strong { color: #172437 !important; }
+      html[data-theme="light"] .app .session-now-box .clock { color: #526277 !important; }
+      html[data-theme="light"] .app .session-asia.active { color: #174e91 !important; background: #eaf3ff !important; border-color: #9ec7f7 !important; }
+      html[data-theme="light"] .app .session-london.active { color: #126448 !important; background: #e6fbf2 !important; border-color: #8bdfbe !important; }
+      html[data-theme="light"] .app .session-newyork.active { color: #805500 !important; background: #fff4d4 !important; border-color: #f1ce70 !important; }
+      html[data-theme="light"] .app .pred-portfolio-page {
+        --p-bg: #f3f6fa;
+        --p-panel: #ffffff;
+        --p-panel2: #eef3f8;
+        --p-border: rgba(31, 48, 70, .16);
+        --p-text: #172437;
+        --p-muted: #526277;
+        color: var(--p-text) !important;
+      }
+      html[data-theme="light"] .app .pred-portfolio-page .pred-panel,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-stat,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-mini,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-note-card,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-form,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-panel-head {
+        background-color: #ffffff !important;
+        color: #172437 !important;
+        border-color: #d3dce7 !important;
+      }
+      html[data-theme="light"] .app .pred-portfolio-page .pred-muted,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-last,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-stat-label,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-mini-title { color: #526277 !important; }
+      html[data-theme="light"] .app .pred-portfolio-page .pred-portfolio-title,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-panel-title,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-stat-value,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-mini-value { color: #172437 !important; }
+      html[data-theme="light"] .app .pred-portfolio-page input,
+      html[data-theme="light"] .app .pred-portfolio-page select,
+      html[data-theme="light"] .app .pred-portfolio-page textarea,
+      html[data-theme="light"] .app .pred-portfolio-page .pred-search {
+        color: #172437 !important;
+        background: #ffffff !important;
+        border-color: #c7d3e0 !important;
+      }
+
 
     `}</style>
     {navigationBusy ? <div className="predator-route-indicator" aria-hidden="true" /> : null}
