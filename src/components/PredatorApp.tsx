@@ -891,34 +891,6 @@ function CompactSignalCard({
 
       <div style={{ position: "relative" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          {onInfoClick && (
-            <span
-              role="button"
-              tabIndex={0}
-              aria-label={`View ${baseAsset} signal analysis`}
-              title="View signal analysis"
-              onClick={(event) => { event.stopPropagation(); onInfoClick(); }}
-              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onInfoClick(); } }}
-              style={{
-                position: "absolute",
-                top: 0,
-                right: 0,
-                width: 30,
-                height: 30,
-                borderRadius: 9,
-                border: "1px solid rgba(160,190,220,.18)",
-                background: "rgba(5,10,15,.62)",
-                color: "#b9c7d3",
-                display: "grid",
-                placeItems: "center",
-                cursor: "pointer",
-                zIndex: 5,
-                backdropFilter: "blur(8px)",
-              }}
-            >
-              <Info size={15} />
-            </span>
-          )}
           <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
             <CompactCoinIcon baseAsset={baseAsset} />
             <div style={{ minWidth: 0 }}>
@@ -951,7 +923,35 @@ function CompactSignalCard({
         <div className="mono" style={{ fontSize: 24, fontWeight: 800, marginTop: 9, letterSpacing: ".01em" }}>
           {formatPrice(price)}
         </div>
-        <div style={{ color: "#74808c", fontSize: 9, marginTop: 2 }}>TRIGGER PRICE</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 2, minHeight: 20 }}>
+          <div style={{ color: "#74808c", fontSize: 9 }}>TRIGGER PRICE</div>
+          {onInfoClick && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label={`View ${baseAsset} signal analysis`}
+              title="View signal analysis"
+              onClick={(event) => { event.stopPropagation(); onInfoClick(); }}
+              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onInfoClick(); } }}
+              style={{
+                flex: "0 0 auto",
+                width: 20,
+                height: 20,
+                borderRadius: 6,
+                border: "1px solid rgba(160,190,220,.2)",
+                background: "rgba(5,10,15,.72)",
+                color: "#b9c7d3",
+                display: "grid",
+                placeItems: "center",
+                cursor: "pointer",
+                lineHeight: 1,
+                padding: 0,
+              }}
+            >
+              <Info size={12} />
+            </span>
+          )}
+        </div>
 
         <div style={{ display: "flex", gap: 6, marginTop: 9 }}>
           {metricBox("1H", change1h)}
