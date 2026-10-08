@@ -6,18 +6,19 @@ import type { User } from "@supabase/supabase-js";
 import {
   BarChart3, Calculator as CalculatorIcon, ChevronRight, Clock3,
   LayoutDashboard, LogOut, Moon, Newspaper, PanelLeft, RefreshCw, Settings,
-  Sun, Wallet, Zap
+  Sun, Wallet, Zap, Plus, Trash2, Search
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import CoinChart from "@/components/CoinChart";
 
-type Tab = "Dashboard"|"Signal"|"Volume Spike"|"BTC Report"|"Portfolio"|"Calculator"|"Settings";
+type Tab = "Dashboard"|"Signal"|"Volume Spike"|"BTC Report"|"Watchlist"|"Portfolio"|"Calculator"|"Settings";
 
 const tabs: {name: Tab; icon: ComponentType<{size?:number; strokeWidth?:number}>}[] = [
   {name:"Dashboard",icon:LayoutDashboard},
   {name:"Signal",icon:Zap},
   {name:"Volume Spike",icon:BarChart3},
   {name:"BTC Report",icon:Newspaper},
+  {name:"Watchlist",icon:Search},
   {name:"Portfolio",icon:Wallet},
   {name:"Calculator",icon:CalculatorIcon},
   {name:"Settings",icon:Settings},
@@ -3359,6 +3360,221 @@ function SettingsPage({ user, onLogout, onProfileNameChange }: { user: User; onL
   );
 }
 
+
+type WatchlistQuote = {
+  symbol: string;
+  price: number;
+  change24h: number;
+  high24h: number;
+  low24h: number;
+  updatedAt: number;
+};
+
+function normalizeWatchSymbol(value: string) {
+  const clean = value.trim().toUpperCase().replace(/[\s$]/g, "").replace("/USDT", "").replace("USDT", "");
+  if (!clean || !/^[A-Z0-9]{2,20}$/.test(clean)) return "";
+  return `${clean}USDT`;
+}
+
+function Watchlist({ onCoinClick }: { onCoinClick: (symbol: string) => void }) {
+  const [symbols, setSymbols] = useState<string[]>(["BTCUSDT", "ETHUSDT", "SOLUSDT"]);
+  const [quotes, setQuotes] = useState<Record<string, WatchlistQuote>>({});
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem("predator-watchlist") || "null");
+      if (Array.isArray(saved) && saved.length) {
+        setSymbols(saved.filter((x): x is string => typeof x === "string"));
+      }
+    } catch {
+      // Keep the default starter watchlist.
+    } finally {
+      setHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem("predator-watchlist", JSON.stringify(symbols));
+  }, [hydrated, symbols]);
+
+  const loadQuotes = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    setError("");
+    try {
+      if (!symbols.length) {
+        setQuotes({});
+        setLoading(false);
+        return;
+      }
+
+      const entries = await Promise.all(symbols.map(async (symbol) => {
+        try {
+          const data = await fetchJsonWithFallback<any>([
+            `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
+            `https://api.binance.com/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
+          ]);
+          const price = Number(data?.lastPrice);
+          const change24h = Number(data?.priceChangePercent);
+          const high24h = Number(data?.highPrice);
+          const low24h = Number(data?.lowPrice);
+          if (!Number.isFinite(price)) return null;
+          return [symbol, {
+            symbol,
+            price,
+            change24h: Number.isFinite(change24h) ? change24h : 0,
+            high24h: Number.isFinite(high24h) ? high24h : 0,
+            low24h: Number.isFinite(low24h) ? low24h : 0,
+            updatedAt: Date.now(),
+          } as WatchlistQuote] as const;
+        } catch {
+          return null;
+        }
+      }));
+
+      const next = Object.fromEntries(entries.filter((item): item is [string, WatchlistQuote] => item !== null));
+      setQuotes(next);
+      setLastUpdated(Date.now());
+      const missing = symbols.filter((symbol) => !next[symbol]);
+      if (missing.length) setError(`Could not load: ${missing.map((symbol) => symbol.replace("USDT", "")).join(", ")}`);
+    } catch {
+      setError("Live watchlist prices are temporarily unavailable.");
+    } finally {
+      setLoading(false);
+    }
+  }, [symbols]);
+
+  useEffect(() => {
+    loadQuotes(true);
+    const timer = window.setInterval(() => loadQuotes(false), 30000);
+    return () => window.clearInterval(timer);
+  }, [loadQuotes]);
+
+  const addCoin = async () => {
+    const symbol = normalizeWatchSymbol(input);
+    if (!symbol) {
+      setError("Enter a valid coin symbol, for example BTC or ETH.");
+      return;
+    }
+    if (symbols.includes(symbol)) {
+      setError(`${symbol.replace("USDT", "")} is already in your watchlist.`);
+      return;
+    }
+
+    setAdding(true);
+    setError("");
+    try {
+      const data = await fetchJsonWithFallback<any>([
+        `https://data-api.binance.vision/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
+        `https://api.binance.com/api/v3/ticker/24hr?symbol=${encodeURIComponent(symbol)}`,
+      ]);
+      const price = Number(data?.lastPrice);
+      if (!Number.isFinite(price)) throw new Error("Coin not found");
+      setSymbols((current) => [...current, symbol]);
+      setInput("");
+    } catch {
+      setError(`${symbol.replace("USDT", "")} could not be found as a live USDT market.`);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const removeCoin = (symbol: string) => {
+    setSymbols((current) => current.filter((item) => item !== symbol));
+    setQuotes((current) => {
+      const next = { ...current };
+      delete next[symbol];
+      return next;
+    });
+  };
+
+  return (
+    <div className="page">
+      <div className="page-head pred-watchlist-head">
+        <div>
+          <p className="eyebrow">MARKET TOOLS</p>
+          <h1>Watchlist</h1>
+          <p className="muted">Track your coins with live prices and 24H movement.</p>
+        </div>
+        <div className="pred-watchlist-updated">
+          <span className="pred-live-dot" /> LIVE
+          <span>{lastUpdated ? `Updated ${new Date(lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "Updating..."}</span>
+        </div>
+      </div>
+
+      <Card className="pred-watchlist-add-card">
+        <div className="pred-watchlist-add-row">
+          <div className="pred-watchlist-input-wrap">
+            <Search size={16} />
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value.toUpperCase())}
+              onKeyDown={(event) => { if (event.key === "Enter") addCoin(); }}
+              placeholder="Add coin — BTC, ETH, SOL, DOGE..."
+              aria-label="Add coin to watchlist"
+            />
+          </div>
+          <button className="glass-btn pred-watchlist-add-btn" onClick={addCoin} disabled={adding}>
+            <Plus size={15} /> {adding ? "Checking..." : "Add coin"}
+          </button>
+        </div>
+        {error ? <p className="pred-watchlist-error">{error}</p> : <p className="muted pred-watchlist-hint">Type a symbol and add it. Prices refresh automatically every 30 seconds.</p>}
+      </Card>
+
+      <div className="pred-watchlist-grid">
+        {loading && symbols.length > 0 ? (
+          symbols.map((symbol) => (
+            <Card key={symbol} className="pred-watchlist-card pred-watchlist-skeleton">
+              <span className="label">{symbol.replace("USDT", "")}</span>
+              <strong>Loading...</strong>
+              <span className="muted">Fetching live price</span>
+            </Card>
+          ))
+        ) : symbols.length === 0 ? (
+          <Card className="pred-watchlist-empty">
+            <div className="pred-watchlist-empty-icon"><Plus size={18} /></div>
+            <strong>Your watchlist is empty</strong>
+            <span className="muted">Add your first coin above to start tracking live price.</span>
+          </Card>
+        ) : (
+          symbols.map((symbol) => {
+            const quote = quotes[symbol];
+            const base = symbol.replace("USDT", "");
+            return (
+              <Card key={symbol} className="pred-watchlist-card">
+                <div className="pred-watchlist-card-top">
+                  <button className="pred-watchlist-coin" onClick={() => onCoinClick(symbol)} title={`Open ${base} chart`}>
+                    <span className="pred-watchlist-symbol">{base}</span>
+                    <span className="pred-watchlist-pair">/ USDT</span>
+                  </button>
+                  <button className="pred-watchlist-remove" onClick={() => removeCoin(symbol)} aria-label={`Remove ${base}`} title="Remove">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+                <strong className="pred-watchlist-price">{quote ? `$${formatPrice(quote.price)}` : "—"}</strong>
+                <div className="pred-watchlist-meta">
+                  <span className={quote && quote.change24h >= 0 ? "up" : "down"}>{quote ? formatPct(quote.change24h) : "—"}</span>
+                  <span className="muted">24H</span>
+                </div>
+                <div className="pred-watchlist-range">
+                  <span>H {quote ? formatPrice(quote.high24h) : "—"}</span>
+                  <span>L {quote ? formatPrice(quote.low24h) : "—"}</span>
+                </div>
+              </Card>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ThemeToggle(){const [dark,setDark]=useState(true);useEffect(()=>{const saved=typeof window!=="undefined"?localStorage.getItem("predator-theme"):null;const next=saved? saved==="dark" : true;setDark(next);document.documentElement.dataset.theme=next?"dark":"light"},[]);useEffect(()=>{document.documentElement.dataset.theme=dark?"dark":"light";if(typeof window!=="undefined")localStorage.setItem("predator-theme",dark?"dark":"light")},[dark]);return <button className="icon-btn" onClick={()=>setDark((v: boolean)=>!v)}>{dark?<Moon size={17}/>:<Sun size={17}/>}</button>}
 
 const TAB_HASH: Record<Tab, string> = {
@@ -3366,6 +3582,7 @@ const TAB_HASH: Record<Tab, string> = {
   "Signal": "signal",
   "Volume Spike": "volume-spike",
   "BTC Report": "btc-report",
+  "Watchlist": "watchlist",
   "Portfolio": "portfolio",
   "Calculator": "calculator",
   "Settings": "settings",
@@ -3491,7 +3708,7 @@ export default function PredatorApp({ user }: { user: User }){
     setSelectedSymbol(symbol);
   }, []);
 
-  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={navigateTo} onCoinClick={openCoin}/>;case"Signal":return <Signals user={user} onCoinClick={openCoin}/>;case"Volume Spike":return <VolumeSpike onCoinClick={openCoin}/>;case"BTC Report":return <BTCReport onCoinClick={openCoin}/>;case"Portfolio":return <Portfolio user={user}/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={navigateTo} onCoinClick={openCoin}/>}},[navigateTo, openCoin, tab, user]);
+  const content=useMemo(()=>{switch(tab){case"Dashboard":return <Dashboard go={navigateTo} onCoinClick={openCoin}/>;case"Signal":return <Signals user={user} onCoinClick={openCoin}/>;case"Volume Spike":return <VolumeSpike onCoinClick={openCoin}/>;case"BTC Report":return <BTCReport onCoinClick={openCoin}/>;case"Watchlist":return <Watchlist onCoinClick={openCoin}/>;case"Portfolio":return <Portfolio user={user}/>;case"Calculator":return <CalculatorPage/>;case"Settings":return <SettingsPage user={user} onLogout={logout} onProfileNameChange={setProfileName}/>;default:return <Dashboard go={navigateTo} onCoinClick={openCoin}/>}},[navigateTo, openCoin, tab, user]);
 
   return <div className={"app "+(collapsed?"collapsed":"")}>
     <style>{`
@@ -3542,7 +3759,35 @@ export default function PredatorApp({ user }: { user: User }){
         50% { opacity: 1; width: 150px; }
       }
       .signal-card-grid { width: 100%; }
+
+      .pred-watchlist-head { align-items: flex-end; gap: 16px; }
+      .pred-watchlist-updated { display: flex; align-items: center; gap: 8px; color: #aeb5c0; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+      .pred-live-dot { width: 7px; height: 7px; border-radius: 999px; background: #31e981; box-shadow: 0 0 12px rgba(49,233,129,.6); }
+      .pred-watchlist-add-card { padding: 16px !important; margin-bottom: 14px; }
+      .pred-watchlist-add-row { display:flex; gap:10px; align-items:center; }
+      .pred-watchlist-input-wrap { flex:1; min-width:0; display:flex; align-items:center; gap:9px; height:44px; padding:0 13px; border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.025); border-radius:12px; color:#788291; }
+      .pred-watchlist-input-wrap input { flex:1; min-width:0; border:0; outline:0; background:transparent; color:#f4f5f7; font:inherit; font-size:13px; text-transform:uppercase; }
+      .pred-watchlist-input-wrap input::placeholder { color:#5e6672; text-transform:none; }
+      .pred-watchlist-add-btn { height:44px; }
+      .pred-watchlist-hint, .pred-watchlist-error { margin:9px 2px 0; font-size:10px; }
+      .pred-watchlist-error { color:#ff6a79; }
+      .pred-watchlist-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+      .pred-watchlist-card { position:relative; min-height:168px; padding:17px !important; overflow:hidden; }
+      .pred-watchlist-card::before { content:""; position:absolute; left:0; top:18px; bottom:18px; width:2px; border-radius:999px; background:linear-gradient(180deg, rgba(255,54,76,.95), rgba(255,54,76,.05)); }
+      .pred-watchlist-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+      .pred-watchlist-coin { padding:0; border:0; background:none; color:inherit; display:flex; align-items:baseline; gap:5px; cursor:pointer; }
+      .pred-watchlist-symbol { font-family:var(--font-heading, inherit); font-size:18px; font-weight:800; letter-spacing:.04em; }
+      .pred-watchlist-pair { color:#747d8a; font-size:10px; }
+      .pred-watchlist-remove { width:30px; height:30px; display:grid; place-items:center; border:1px solid rgba(255,255,255,.08); background:rgba(255,255,255,.025); color:#7b8592; border-radius:9px; cursor:pointer; }
+      .pred-watchlist-remove:hover { color:#ff6878; border-color:rgba(255,80,100,.35); }
+      .pred-watchlist-price { display:block; margin-top:21px; font-family:var(--font-data,ui-monospace); font-size:27px; letter-spacing:.02em; }
+      .pred-watchlist-meta { display:flex; gap:7px; align-items:center; margin-top:6px; font-family:var(--font-data,ui-monospace); font-size:11px; }
+      .pred-watchlist-range { display:flex; justify-content:space-between; gap:12px; margin-top:17px; padding-top:11px; border-top:1px solid rgba(255,255,255,.06); color:#8f97a4; font-size:9px; font-family:var(--font-data,ui-monospace); }
+      .pred-watchlist-empty { grid-column:1/-1; min-height:190px; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; gap:7px; }
+      .pred-watchlist-empty-icon { width:38px; height:38px; border-radius:12px; display:grid; place-items:center; border:1px solid rgba(255,255,255,.09); background:rgba(255,255,255,.03); color:#a7afbb; margin-bottom:4px; }
+      .pred-watchlist-skeleton { opacity:.78; }
       @media (max-width: 1180px) {
+
         .signal-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
       }
       @media (max-width: 700px) {
@@ -3687,6 +3932,13 @@ export default function PredatorApp({ user }: { user: User }){
         .app .topbar .session-now-box { min-width:54px !important; padding:0 !important; gap:0 !important; }
         .app .topbar .session-now-label { font-size:5px !important; } .app .topbar .session-now-box strong { font-size:8px !important; } .app .topbar .session-now-box .clock { font-size:7px !important; }
         .market-price-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:9px !important; }
+        .pred-watchlist-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:9px !important; }
+        .pred-watchlist-add-row { flex-direction:column !important; align-items:stretch !important; }
+        .pred-watchlist-add-btn { width:100% !important; justify-content:center !important; }
+        .pred-watchlist-head { align-items:flex-start !important; }
+        .pred-watchlist-updated { font-size:8px !important; }
+        .pred-watchlist-card { min-height:150px !important; padding:13px !important; }
+        .pred-watchlist-price { font-size:20px !important; margin-top:15px !important; }
         .live-price-card { padding:12px 11px !important; border-radius:13px !important; } .live-price-name { display:none !important; } .live-price-symbol { font-size:13px !important; }
         .live-price-card>strong { font-size:16px !important; margin:10px 0 8px !important; } .live-price-bottom { font-size:8px !important; } .live-price-bottom b { font-size:9px !important; }
         .app .top-actions { flex: 0 0 auto !important; gap: 6px !important; }
