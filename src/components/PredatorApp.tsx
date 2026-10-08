@@ -64,12 +64,37 @@ function Logo() {
 function SessionBar() {
   const [now,setNow] = useState(new Date());
   useEffect(()=>{const t=setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(t)},[]);
-  const h=now.getUTCHours();
-  const session=h<7?"ASIA":h<13?"LONDON":h<21?"NEW YORK":"ASIA";
+
+  const minutes = now.getUTCHours() * 60 + now.getUTCMinutes() + now.getUTCSeconds() / 60;
+  const sessions = [
+    { name: "ASIA", start: 0, end: 7 * 60, color: "asia" },
+    { name: "LONDON", start: 7 * 60, end: 13 * 60, color: "london" },
+    { name: "NEW YORK", start: 13 * 60, end: 21 * 60, color: "newyork" },
+  ];
+  const active = sessions.find((item) => minutes >= item.start && minutes < item.end) ?? null;
+  const activeProgress = active
+    ? Math.max(0, Math.min(100, ((minutes - active.start) / (active.end - active.start)) * 100))
+    : 100;
+
   return <div className="sessionbar">
     <div className="session-title"><Clock3 size={15}/><span>MARKET SESSION</span></div>
     <div className="sessions">
-      {["ASIA","LONDON","NEW YORK"].map(s=><div key={s} className={"session "+(s===session?"active":"")}>{s}</div>)}
+      {sessions.map((item) => {
+        const isActive = item.name === active?.name;
+        const isPast = active ? item.end <= minutes : item.end <= minutes;
+        return (
+          <div key={item.name} className={`session session-${item.color} ${isActive ? "active" : ""} ${isPast ? "past" : ""}`}>
+            <div className="session-meta">
+              <span>{item.name}</span>
+              <small>{isActive ? `${Math.round(activeProgress)}%` : item.name === "ASIA" ? "00–07" : item.name === "LONDON" ? "07–13" : "13–21"}</small>
+            </div>
+            <div className="session-track">
+              <div className="session-fill" style={{ width: isActive ? `${activeProgress}%` : isPast ? "100%" : "0%" }} />
+            </div>
+            {isActive ? <span className="session-state">LIVE</span> : null}
+          </div>
+        );
+      })}
     </div>
     <div className="clock">{now.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"})}</div>
   </div>
@@ -277,18 +302,25 @@ function Dashboard({
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState("");
   const [error, setError] = useState("");
+  const [xauPrice, setXauPrice] = useState<number | null>(null);
 
   async function loadDashboardData(isManual = false) {
     if (isManual) setRefreshing(true);
     setError("");
 
     try {
-      const [marketResponse, signalResponse, volumeResponse] = await Promise.all([
+      const [marketResponse, signalResponse, volumeResponse, xauData] = await Promise.all([
         fetch(`/api/market?ts=${Date.now()}`, { cache: "no-store" }),
         fetch(`/api/signals?ts=${Date.now()}`, { cache: "no-store" }),
         fetch(`/api/volume-spike?interval=1h&ts=${Date.now()}`, {
           cache: "no-store",
         }),
+        fetch("https://api.goldprice.dev/v1/prices?symbol=XAU-USD-SPOT", { cache: "no-store" })
+          .then(async (response) => {
+            if (!response.ok) return null;
+            return response.json();
+          })
+          .catch(() => null),
       ]);
 
       const [marketData, signalData, volumeData] = await Promise.all([
@@ -296,6 +328,9 @@ function Dashboard({
         signalResponse.json(),
         volumeResponse.json(),
       ]);
+
+      const parsedXau = Number(xauData?.symbols?.[0]?.price);
+      setXauPrice(Number.isFinite(parsedXau) ? parsedXau : null);
 
       if (!marketResponse.ok || !marketData.ok) {
         throw new Error(marketData.error || "Market data unavailable");
@@ -488,6 +523,35 @@ function Dashboard({
             </div>
           )}
         </Card>
+      </div>
+
+      <div className="market-price-grid" aria-label="Live asset prices">
+        {[
+          { symbol: "BTC", marketSymbol: "BTCUSDT", label: "Bitcoin", accent: "btc", price: btc?.price ?? null, change: btc?.change24h ?? null },
+          { symbol: "ETH", marketSymbol: "ETHUSDT", label: "Ethereum", accent: "eth", price: market?.markets?.find((item) => item.symbol === "ETHUSDT")?.price ?? null, change: market?.markets?.find((item) => item.symbol === "ETHUSDT")?.change24h ?? null },
+          { symbol: "SOL", marketSymbol: "SOLUSDT", label: "Solana", accent: "sol", price: market?.markets?.find((item) => item.symbol === "SOLUSDT")?.price ?? null, change: market?.markets?.find((item) => item.symbol === "SOLUSDT")?.change24h ?? null },
+          { symbol: "XAU", marketSymbol: "XAUUSD", label: "Gold Spot", accent: "xau", price: xauPrice, change: null },
+        ].map((asset) => (
+          <button
+            key={asset.symbol}
+            type="button"
+            className={`live-price-card live-price-${asset.accent}`}
+            onClick={() => asset.marketSymbol.endsWith("USDT") ? onCoinClick(asset.marketSymbol) : undefined}
+          >
+            <div className="live-price-top">
+              <div>
+                <span className="live-price-symbol">{asset.symbol}</span>
+                <span className="live-price-name">{asset.label}</span>
+              </div>
+              <span className="live-price-live">LIVE</span>
+            </div>
+            <strong>{asset.price == null ? "—" : `$${formatPrice(asset.price)}`}</strong>
+            <div className="live-price-bottom">
+              <span>{asset.symbol === "XAU" ? "XAU / USD · spot" : `${asset.symbol} / USDT`}</span>
+              {asset.change != null ? <b className={asset.change >= 0 ? "up" : "down"}>{formatPct(asset.change)}</b> : <b className="muted">SPOT</b>}
+            </div>
+          </button>
+        ))}
       </div>
 
       <div className="two-col">
@@ -3475,6 +3539,34 @@ export default function PredatorApp({ user }: { user: User }){
           transition: none !important;
         }
       }
+      /* Dashboard live asset strip */
+      .market-price-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-top:14px; }
+      .live-price-card { position:relative; min-width:0; text-align:left; padding:16px 17px; border:1px solid rgba(255,255,255,.10); border-radius:16px; color:#f4f5f7; background:linear-gradient(145deg,rgba(18,20,23,.96),rgba(8,9,11,.98)); box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 12px 28px rgba(0,0,0,.18); overflow:hidden; }
+      .live-price-card::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--price-accent); box-shadow:0 0 16px var(--price-accent); }
+      .live-price-btc { --price-accent:#f7931a; } .live-price-eth { --price-accent:#8b7cff; } .live-price-sol { --price-accent:#22d3ee; } .live-price-xau { --price-accent:#f5c542; }
+      .live-price-top,.live-price-bottom { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .live-price-top>div { display:flex; align-items:baseline; gap:8px; min-width:0; }
+      .live-price-symbol { font-size:16px; font-weight:800; letter-spacing:.08em; }
+      .live-price-name { color:#8f96a2; font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .live-price-live { color:#5df2bd; border:1px solid rgba(93,242,189,.24); background:rgba(93,242,189,.06); border-radius:999px; padding:3px 7px; font-size:8px; font-weight:800; letter-spacing:.12em; }
+      .live-price-card>strong { display:block; margin:13px 0 10px; font-family:var(--font-mono,monospace); font-size:clamp(19px,1.55vw,26px); letter-spacing:-.02em; }
+      .live-price-bottom { color:#747b86; font-size:10px; } .live-price-bottom b { font-family:var(--font-mono,monospace); font-size:11px; }
+
+      /* Large market-session strip */
+      .app .topbar .sessionbar { display:grid !important; grid-template-columns:auto minmax(420px,1fr) auto !important; align-items:center !important; gap:14px !important; min-width:0 !important; width:100% !important; }
+      .app .topbar .sessions { display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:8px !important; min-width:0 !important; }
+      .app .topbar .session { position:relative !important; min-width:0 !important; min-height:42px !important; padding:8px 11px 9px !important; border-radius:11px !important; border:1px solid rgba(255,255,255,.09) !important; background:rgba(255,255,255,.025) !important; color:#818893 !important; overflow:hidden !important; }
+      .app .topbar .session-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; position:relative; z-index:2; }
+      .app .topbar .session-meta span { font-family:var(--font-mono,monospace); font-size:10px; font-weight:800; letter-spacing:.12em; }
+      .app .topbar .session-meta small { font-size:8px; opacity:.72; }
+      .app .topbar .session-track { position:relative; height:5px; margin-top:7px; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden; }
+      .app .topbar .session-fill { height:100%; border-radius:inherit; transition:width 900ms linear; }
+      .app .topbar .session-state { position:absolute; right:9px; bottom:5px; font-size:7px; font-weight:900; letter-spacing:.12em; opacity:.75; }
+      .app .topbar .session-asia.active { border-color:rgba(72,153,255,.65) !important; background:linear-gradient(180deg,rgba(36,112,210,.20),rgba(16,34,58,.28)) !important; color:#cce5ff !important; } .app .topbar .session-asia .session-fill { background:linear-gradient(90deg,#3d8dff,#56c7ff); }
+      .app .topbar .session-london.active { border-color:rgba(20,211,154,.65) !important; background:linear-gradient(180deg,rgba(20,211,154,.18),rgba(11,46,39,.28)) !important; color:#b8ffe9 !important; } .app .topbar .session-london .session-fill { background:linear-gradient(90deg,#16c995,#66f2c7); }
+      .app .topbar .session-newyork.active { border-color:rgba(255,193,7,.72) !important; background:linear-gradient(180deg,rgba(255,193,7,.16),rgba(57,45,8,.24)) !important; color:#fff0a8 !important; } .app .topbar .session-newyork .session-fill { background:linear-gradient(90deg,#ff9d00,#ffd54a); }
+      .app .topbar .session.past { opacity:.55; } .app .topbar .session-title { white-space:nowrap; } .app .topbar .clock { font-family:var(--font-mono,monospace); font-weight:800; white-space:nowrap; }
+
       /* PREDATOR mobile app shell: presentation-only responsive overrides. */
       @media (max-width: 767px) {
         html, body { max-width: 100%; overflow-x: hidden !important; }
@@ -3558,11 +3650,16 @@ export default function PredatorApp({ user }: { user: User }){
           -webkit-backdrop-filter: blur(16px) !important;
         }
         .app .topbar > .icon-btn { flex: 0 0 38px !important; width: 38px !important; height: 38px !important; }
-        .app .topbar .sessionbar { flex: 1 1 auto !important; min-width: 0 !important; width: auto !important; gap: 5px !important; overflow: hidden !important; }
-        .app .topbar .session-title { display: none !important; }
-        .app .topbar .sessions { min-width: 0 !important; gap: 3px !important; overflow: hidden !important; }
-        .app .topbar .session { padding: 6px 7px !important; font-size: 9px !important; border-radius: 8px !important; white-space: nowrap !important; }
-        .app .topbar .clock { flex: 0 0 auto !important; font-size: 12px !important; white-space: nowrap !important; }
+        .app .topbar .sessionbar { grid-template-columns:minmax(0,1fr) auto !important; flex:1 1 auto !important; min-width:0 !important; width:auto !important; gap:6px !important; overflow:hidden !important; }
+        .app .topbar .session-title { display:none !important; }
+        .app .topbar .sessions { grid-template-columns:repeat(3,minmax(0,1fr)) !important; min-width:0 !important; gap:3px !important; overflow:hidden !important; }
+        .app .topbar .session { min-height:34px !important; padding:5px 5px 6px !important; border-radius:8px !important; white-space:nowrap !important; }
+        .app .topbar .session-meta span { font-size:7px !important; letter-spacing:.06em !important; } .app .topbar .session-meta small { font-size:6px !important; }
+        .app .topbar .session-track { height:3px !important; margin-top:5px !important; } .app .topbar .session-state { display:none !important; }
+        .app .topbar .clock { flex:0 0 auto !important; font-size:10px !important; white-space:nowrap !important; }
+        .market-price-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:9px !important; }
+        .live-price-card { padding:12px 11px !important; border-radius:13px !important; } .live-price-name { display:none !important; } .live-price-symbol { font-size:13px !important; }
+        .live-price-card>strong { font-size:16px !important; margin:10px 0 8px !important; } .live-price-bottom { font-size:8px !important; } .live-price-bottom b { font-size:9px !important; }
         .app .top-actions { flex: 0 0 auto !important; gap: 6px !important; }
         .app .top-actions .profile { gap: 0 !important; }
         .app .top-actions .profile span { display: none !important; }
