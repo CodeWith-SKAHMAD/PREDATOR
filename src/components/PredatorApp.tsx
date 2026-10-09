@@ -3643,6 +3643,8 @@ function SettingsPage({ user, onLogout, onProfileNameChange }: { user: User; onL
   const [saving, setSaving] = useState(false);
   const [identityLoading, setIdentityLoading] = useState(false);
   const [status, setStatus] = useState("");
+  const [pendingConfirmation, setPendingConfirmation] = useState<"disconnect-discord" | "delete-account" | null>(null);
+  const [confirmationText, setConfirmationText] = useState("");
   const provider = user.app_metadata?.provider || "email";
   const avatar = getAvatar(user);
   const identities = user.identities || [];
@@ -3713,7 +3715,6 @@ function SettingsPage({ user, onLogout, onProfileNameChange }: { user: User; onL
   const disconnectDiscord = async () => {
     if (!supabase) return;
     const auth = supabase.auth as any;
-    if (!window.confirm("Disconnect Discord from this account?")) return;
     setIdentityLoading(true); setStatus("");
     try {
       const result = await auth.getUserIdentities();
@@ -3730,7 +3731,6 @@ function SettingsPage({ user, onLogout, onProfileNameChange }: { user: User; onL
 
   const deleteAccount = async () => {
     if (!supabase) return;
-    if (!window.confirm("This will permanently delete the account when the secure delete_user database function is configured. Continue?")) return;
     setSaving(true); setStatus("");
     try {
       const auth = supabase.auth as any;
@@ -3741,6 +3741,24 @@ function SettingsPage({ user, onLogout, onProfileNameChange }: { user: User; onL
       setStatus(err instanceof Error ? `Account deletion is not enabled yet: ${err.message}` : "Account deletion is not enabled yet.");
     } finally { setSaving(false); }
   };
+
+  const openConfirmation = (action: "disconnect-discord" | "delete-account") => {
+    setConfirmationText("");
+    setStatus("");
+    setPendingConfirmation(action);
+  };
+
+  const confirmSensitiveAction = async () => {
+    const action = pendingConfirmation;
+    const requiredText = action === "disconnect-discord" ? "DISCONNECT DISCORD" : "DELETE ACCOUNT";
+    if (!action || confirmationText.trim().toUpperCase() !== requiredText) return;
+    setPendingConfirmation(null);
+    setConfirmationText("");
+    if (action === "disconnect-discord") await disconnectDiscord();
+    else await deleteAccount();
+  };
+
+  const requiredConfirmationText = pendingConfirmation === "disconnect-discord" ? "DISCONNECT DISCORD" : "DELETE ACCOUNT";
 
   return (
     <div className="page">
@@ -3764,14 +3782,25 @@ function SettingsPage({ user, onLogout, onProfileNameChange }: { user: User; onL
         <Card>
           <span className="label">IDENTITIES</span><h2>Discord</h2>
           <p className="muted">{discordConnected ? "Discord is connected to this account." : "Discord is not linked to this account."}</p>
-          {discordConnected ? <button className="chip" onClick={disconnectDiscord} disabled={identityLoading}>{identityLoading ? "Working..." : "Disconnect Discord"}</button> : <button className="glass-btn" onClick={connectDiscord} disabled={identityLoading}>{identityLoading ? "Working..." : "Connect Discord"}</button>}
+          {discordConnected ? <button className="chip" onClick={() => openConfirmation("disconnect-discord")} disabled={identityLoading}>{identityLoading ? "Working..." : "Disconnect Discord"}</button> : <button className="glass-btn" onClick={connectDiscord} disabled={identityLoading}>{identityLoading ? "Working..." : "Connect Discord"}</button>}
           <div className="setting-row" style={{ marginTop:"18px" }}><span>Theme</span><button className="icon-btn" onClick={()=>setDark((v: boolean)=>!v)} type="button" aria-label="Toggle theme">{dark ? <Moon size={17}/> : <Sun size={17}/>}</button></div>
           <div className="setting-row"><span>Session alerts</span><button className="chip" type="button" onClick={()=>{const next=localStorage.getItem("predator-alerts") !== "on"; localStorage.setItem("predator-alerts", next?"on":"off"); setStatus(`Session alerts ${next ? "enabled" : "disabled"}.`)}}>Toggle</button></div>
           <button className="glass-btn logout-btn" onClick={onLogout}><LogOut size={16}/> Logout</button>
-          <button className="danger" type="button" onClick={deleteAccount} disabled={saving}>Delete account</button>
+          <button className="danger" type="button" onClick={() => openConfirmation("delete-account")} disabled={saving}>Delete account</button>
         </Card>
       </div>
       {status && <p className="muted" style={{ marginTop:"12px" }}>{status}</p>}
+      {pendingConfirmation && <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setPendingConfirmation(null); setConfirmationText(""); } }} style={{ position:"fixed", inset:0, zIndex:300, display:"grid", placeItems:"center", padding:16, background:"rgba(2,6,12,.76)", backdropFilter:"blur(10px)" }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="pred-confirm-title" style={{ width:"100%", maxWidth:420, padding:22, borderRadius:18, background:"var(--panel, #101721)", color:"var(--text, #f2f6fb)", border:"1px solid var(--line, rgba(155,178,204,.24))", boxShadow:"0 24px 80px rgba(0,0,0,.45)" }}>
+          <h2 id="pred-confirm-title" style={{ margin:"0 0 16px", fontSize:20, lineHeight:1.25 }}>{pendingConfirmation === "disconnect-discord" ? "Disconnect Discord" : "Delete account"}</h2>
+          <label style={{ display:"block", marginBottom:8, fontSize:13, color:"var(--muted, #afbdcf)" }}>Type <strong style={{ color:"var(--text, #f2f6fb)" }}>{requiredConfirmationText}</strong> to confirm.</label>
+          <input autoFocus value={confirmationText} onChange={(event: ChangeEvent<HTMLInputElement>) => setConfirmationText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && confirmationText.trim().toUpperCase() === requiredConfirmationText) void confirmSensitiveAction(); if (event.key === "Escape") { setPendingConfirmation(null); setConfirmationText(""); } }} aria-label={`Type ${requiredConfirmationText}`} placeholder={requiredConfirmationText} style={{ width:"100%", boxSizing:"border-box", marginBottom:18, padding:"12px 13px", borderRadius:10, border:"1px solid var(--line, rgba(155,178,204,.24))", background:"var(--bg, #070a0f)", color:"var(--text, #f2f6fb)", outlineOffset:2 }} />
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:9 }}>
+            <button type="button" className="glass-btn" onClick={() => { setPendingConfirmation(null); setConfirmationText(""); }}>Cancel</button>
+            <button type="button" className={pendingConfirmation === "delete-account" ? "danger" : "glass-btn"} disabled={confirmationText.trim().toUpperCase() !== requiredConfirmationText || saving || identityLoading} onClick={() => void confirmSensitiveAction()} style={{ minWidth:82, justifyContent:"center" }}>Done</button>
+          </div>
+        </div>
+      </div>}
     </div>
   );
 }
