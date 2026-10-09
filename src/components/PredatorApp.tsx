@@ -3244,6 +3244,8 @@ function CalculatorPage() {
   const [rate, setRate] = useState<number | null>(null);
   const [rateLoading, setRateLoading] = useState(false);
   const [rateError, setRateError] = useState("");
+  const [rateSource, setRateSource] = useState("");
+  const [rateUpdatedAt, setRateUpdatedAt] = useState<string | null>(null);
   const [justEvaluated, setJustEvaluated] = useState(false);
 
   const formatCalculatorDisplay = (value: string) => {
@@ -3346,28 +3348,85 @@ function CalculatorPage() {
 
   useEffect(() => {
     let active = true;
-    const loadRate = async () => {
-      setRateLoading(true);
+    let inFlight = false;
+
+    const loadRate = async (showLoading = false) => {
+      if (inFlight) return;
+      inFlight = true;
+      if (showLoading && active) setRateLoading(true);
       setRateError("");
+
       try {
-        const payload = await fetchJsonWithFallback<{ rates?: Record<string, number> }>([
-          `https://open.er-api.com/v6/latest/${encodeURIComponent(from)}`,
-        ]);
-        const nextRate = payload.rates?.[to];
-        if (!Number.isFinite(nextRate)) throw new Error("Rate unavailable");
-        if (active) setRate(Number(nextRate));
+        let nextRate: number | null = null;
+        let nextSource = "";
+        let nextUpdatedAt: string | null = null;
+
+        // Primary source: intraday reference rates, refreshed by the provider every few minutes.
+        try {
+          const response = await fetch(
+            `https://fxapi.app/api/${encodeURIComponent(from.toLowerCase())}/${encodeURIComponent(to.toLowerCase())}.json?ts=${Date.now()}`,
+            { cache: "no-store" },
+          );
+          if (!response.ok) throw new Error(`FX rate request failed (${response.status})`);
+          const payload = await response.json() as {
+            base?: string;
+            target?: string;
+            rate?: number;
+            timestamp?: string;
+          };
+          if (!Number.isFinite(payload.rate) || Number(payload.rate) <= 0) {
+            throw new Error("Intraday rate unavailable");
+          }
+          if (payload.base && payload.base.toUpperCase() !== from) throw new Error("Rate base mismatch");
+          if (payload.target && payload.target.toUpperCase() !== to) throw new Error("Rate target mismatch");
+          nextRate = Number(payload.rate);
+          nextSource = "FXAPI · 5m";
+          nextUpdatedAt = payload.timestamp || new Date().toISOString();
+        } catch {
+          // Fallback: daily reference rate if the intraday provider is unavailable.
+          const fallback = await fetchJsonWithFallback<{
+            rates?: Record<string, number>;
+            time_last_update_utc?: string;
+            time_last_update_unix?: number;
+          }>([
+            `https://open.er-api.com/v6/latest/${encodeURIComponent(from)}`,
+          ]);
+          const fallbackRate = fallback.rates?.[to];
+          if (!Number.isFinite(fallbackRate) || Number(fallbackRate) <= 0) {
+            throw new Error("Rate unavailable");
+          }
+          nextRate = Number(fallbackRate);
+          nextSource = "Daily reference";
+          nextUpdatedAt = fallback.time_last_update_unix
+            ? new Date(fallback.time_last_update_unix * 1000).toISOString()
+            : fallback.time_last_update_utc
+              ? new Date(fallback.time_last_update_utc).toISOString()
+              : new Date().toISOString();
+        }
+
+        if (active && nextRate !== null) {
+          setRate(nextRate);
+          setRateSource(nextSource);
+          setRateUpdatedAt(nextUpdatedAt);
+        }
       } catch (err) {
         if (active) {
           setRate(null);
+          setRateSource("");
+          setRateUpdatedAt(null);
           setRateError(err instanceof Error ? err.message : "Rate unavailable");
         }
       } finally {
-        if (active) setRateLoading(false);
+        inFlight = false;
+        if (active && showLoading) setRateLoading(false);
       }
     };
-    loadRate();
+
+    void loadRate(true);
+    const refreshTimer = window.setInterval(() => void loadRate(false), 5 * 60 * 1000);
     return () => {
       active = false;
+      window.clearInterval(refreshTimer);
     };
   }, [from, to]);
 
@@ -3491,7 +3550,13 @@ function CalculatorPage() {
           <Card>
             <div className="card-head">
               <h2>Currency</h2>
-              <span className="muted">{rateLoading ? "Updating…" : "Live"}</span>
+              <span className="muted">
+                {rateLoading
+                  ? "Updating…"
+                  : rateSource
+                    ? `${rateSource}${rateUpdatedAt ? ` · ${new Date(rateUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`
+                    : "Rate unavailable"}
+              </span>
             </div>
             <div className="form-grid">
               <label>Amount<input type="number" value={amount} onChange={(e: ChangeEvent<HTMLInputElement>) => setAmount(Number(e.target.value) || 0)} /></label>
