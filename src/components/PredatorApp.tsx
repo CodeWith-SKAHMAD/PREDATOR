@@ -6,7 +6,7 @@ import type { User } from "@supabase/supabase-js";
 import {
   Activity, BarChart3, Bell, BrainCircuit, Calculator as CalculatorIcon, ChevronRight, Clock3,
   Gauge, LayoutDashboard, Layers3, LogOut, Moon, Newspaper, PanelLeft, RefreshCw, Settings,
-  ShieldAlert, SlidersHorizontal, Sun, Target, TrendingDown, TrendingUp, Wallet, Zap, Plus, Trash2, Search, CircleDollarSign, Info, X, Check
+  ShieldAlert, SlidersHorizontal, Sun, Target, TrendingDown, TrendingUp, Wallet, Zap, Plus, Trash2, Search, CircleDollarSign, Info, X, Check, MoreHorizontal
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import CoinChart from "@/components/CoinChart";
@@ -4041,6 +4041,7 @@ export default function PredatorApp({ user }: { user: User }){
     typeof window === "undefined" ? "Dashboard" : tabFromHash(window.location.hash),
   );
   const [collapsed,setCollapsed]=useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [profileName, setProfileName] = useState(() => getDisplayName(user));
   const [navigationBusy, setNavigationBusy] = useState(false);
@@ -4056,6 +4057,7 @@ export default function PredatorApp({ user }: { user: User }){
   }, []);
 
   const navigateTo = useCallback((nextTab: Tab, options?: { replace?: boolean }) => {
+    setMobileMoreOpen(false);
     if (nextTab === tab) {
       if (typeof window !== "undefined") {
         window.sessionStorage.setItem("predator-last-tab", nextTab);
@@ -4294,6 +4296,8 @@ export default function PredatorApp({ user }: { user: User }){
       .app .topbar .session-now-box strong { font-family:var(--font-mono,monospace); font-size:13px; letter-spacing:.06em; color:#f1f3f6; white-space:nowrap; }
       .app .topbar .session-now-box .clock { margin-top:2px; font-family:var(--font-mono,monospace); font-size:9px; font-weight:800; color:#858d9a; white-space:nowrap; }
 
+      .app .sidebar .mobile-more-trigger { display: none; }
+      .app .sidebar .mobile-more-menu { display: none; }
       /* PREDATOR mobile app shell: presentation-only responsive overrides. */
       @media (max-width: 767px) {
         html, body { max-width: 100%; overflow-x: hidden !important; }
@@ -4330,12 +4334,48 @@ export default function PredatorApp({ user }: { user: User }){
           width: 100% !important;
           height: 100% !important;
           display: grid !important;
-          grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+          grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
           align-items: stretch !important;
-          gap: 2px !important;
+          gap: 4px !important;
           margin: 0 !important;
           padding: 0 !important;
         }
+        .app .sidebar nav > .nav-item:nth-child(n+5):not(.mobile-more-trigger) { display: none !important; }
+        .app .sidebar nav > .mobile-more-trigger { display: flex !important; }
+        .app .sidebar .mobile-more-trigger span { display: block !important; font-size: 9px !important; line-height: 1 !important; }
+        .app .sidebar .mobile-more-trigger svg { width: 21px !important; height: 21px !important; }
+        .app .sidebar .mobile-more-menu {
+          position: fixed !important;
+          z-index: 10070 !important;
+          right: 10px !important;
+          bottom: calc(74px + env(safe-area-inset-bottom)) !important;
+          width: min(235px, calc(100vw - 20px)) !important;
+          display: grid !important;
+          gap: 4px !important;
+          padding: 8px !important;
+          border: 1px solid rgba(153,171,195,.25) !important;
+          border-radius: 16px !important;
+          background: rgba(10,14,21,.98) !important;
+          box-shadow: 0 18px 48px rgba(0,0,0,.5) !important;
+          backdrop-filter: blur(18px) !important;
+          -webkit-backdrop-filter: blur(18px) !important;
+        }
+        .app .sidebar .mobile-more-item {
+          display: flex !important;
+          align-items: center !important;
+          gap: 12px !important;
+          width: 100% !important;
+          min-height: 43px !important;
+          padding: 10px 12px !important;
+          border: 1px solid transparent !important;
+          border-radius: 10px !important;
+          background: transparent !important;
+          color: #c4cedc !important;
+          text-align: left !important;
+          font-size: 13px !important;
+        }
+        .app .sidebar .mobile-more-item svg { width: 18px !important; height: 18px !important; flex: 0 0 18px !important; }
+        .app .sidebar .mobile-more-item.active { color: #fff !important; border-color: rgba(255,55,80,.42) !important; background: rgba(255,45,70,.12) !important; }
         .app .sidebar .nav-item {
           min-width: 0 !important;
           width: 100% !important;
@@ -4354,6 +4394,7 @@ export default function PredatorApp({ user }: { user: User }){
           font-size: 0 !important;
         }
         .app .sidebar .nav-item span { display: none !important; }
+        .app .sidebar nav > .nav-item.mobile-more-trigger span { display: block !important; font-size: 9px !important; line-height: 1 !important; }
         .app .sidebar .nav-item svg { width: 22px !important; height: 22px !important; stroke-width: 1.8 !important; }
         .app .sidebar .nav-item.active {
           color: #fff !important;
@@ -4367,26 +4408,44 @@ export default function PredatorApp({ user }: { user: User }){
           position: sticky !important;
           top: 0 !important;
           z-index: 10040 !important;
+          display: grid !important;
+          grid-template-columns: 38px minmax(0, 1fr) !important;
+          grid-template-areas: "menu actions" "session session" !important;
+          align-items: center !important;
+          row-gap: 9px !important;
           width: 100% !important;
-          min-height: 62px !important;
+          min-height: 0 !important;
           height: auto !important;
-          padding: 8px 9px !important;
-          gap: 8px !important;
-          overflow: hidden !important;
+          padding: 9px 10px 10px !important;
+          gap: 9px !important;
+          overflow: visible !important;
           backdrop-filter: blur(16px) !important;
           -webkit-backdrop-filter: blur(16px) !important;
         }
-        .app .topbar > .icon-btn { flex: 0 0 38px !important; width: 38px !important; height: 38px !important; }
-        .app .topbar .sessionbar { grid-template-columns:minmax(0,1fr) auto !important; flex:1 1 auto !important; min-width:0 !important; width:auto !important; gap:5px !important; overflow:hidden !important; }
-        .app .topbar .session-live-box { display:flex !important; min-width:88px !important; padding:5px 7px !important; border-radius:8px !important; gap:6px !important; }
-        .app .topbar .session-live-box small { font-size:5px !important; } .app .topbar .session-live-box strong { font-size:8px !important; } .app .topbar .session-live-chip { font-size:5px !important; padding:2px 4px !important; }
-        .app .topbar .session-live-dot { width:6px !important; height:6px !important; flex-basis:6px !important; }
-        .app .topbar .sessions { grid-template-columns:repeat(3,minmax(0,1fr)) !important; min-width:0 !important; gap:3px !important; overflow:hidden !important; }
-        .app .topbar .session { min-height:34px !important; padding:5px 5px 6px !important; border-radius:8px !important; white-space:nowrap !important; }
-        .app .topbar .session-meta span { font-size:7px !important; letter-spacing:.06em !important; } .app .topbar .session-meta small { font-size:6px !important; }
-        .app .topbar .session-track { height:3px !important; margin-top:5px !important; } .app .topbar .session-state { display:none !important; }
-        .app .topbar .session-now-box { min-width:54px !important; padding:0 !important; gap:0 !important; }
-        .app .topbar .session-now-label { font-size:5px !important; } .app .topbar .session-now-box strong { font-size:8px !important; } .app .topbar .session-now-box .clock { font-size:7px !important; }
+        .app .topbar > .icon-btn { grid-area: menu !important; justify-self: start !important; flex: 0 0 38px !important; width: 38px !important; height: 38px !important; }
+        .app .topbar .top-actions { grid-area: actions !important; justify-self: end !important; min-width: 0 !important; }
+        .app .topbar .sessionbar {
+          grid-area: session !important;
+          display: grid !important;
+          grid-template-columns: minmax(0,1fr) 74px !important;
+          grid-template-areas: "live now" "sessions sessions" !important;
+          align-items: center !important;
+          flex: initial !important;
+          min-width: 0 !important;
+          width: 100% !important;
+          gap: 6px !important;
+          overflow: visible !important;
+        }
+        .app .topbar .session-live-box { grid-area: live !important; display:flex !important; min-width:0 !important; min-height:34px !important; padding:6px 8px !important; border-radius:9px !important; gap:7px !important; }
+        .app .topbar .session-live-box > div { gap:2px !important; }
+        .app .topbar .session-live-box small { font-size:7px !important; } .app .topbar .session-live-box strong { font-size:10px !important; } .app .topbar .session-live-chip { font-size:7px !important; padding:2px 5px !important; }
+        .app .topbar .session-live-dot { width:7px !important; height:7px !important; flex-basis:7px !important; }
+        .app .topbar .sessions { grid-area: sessions !important; display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; min-width:0 !important; gap:5px !important; overflow:visible !important; }
+        .app .topbar .session { min-height:39px !important; padding:6px 7px 7px !important; border-radius:9px !important; white-space:nowrap !important; }
+        .app .topbar .session-meta span { font-size:8px !important; letter-spacing:.04em !important; } .app .topbar .session-meta small { font-size:7px !important; }
+        .app .topbar .session-track { height:4px !important; margin-top:6px !important; } .app .topbar .session-state { display:none !important; }
+        .app .topbar .session-now-box { grid-area: now !important; min-width:0 !important; justify-items:end !important; align-self:center !important; padding:0 !important; gap:2px !important; }
+        .app .topbar .session-now-label { font-size:7px !important; } .app .topbar .session-now-box strong { font-size:12px !important; } .app .topbar .session-now-box .clock { font-size:8px !important; }
         .market-price-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:9px !important; }
         .pred-watchlist-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:9px !important; }
         .pred-watchlist-add-row { flex-direction:column !important; align-items:stretch !important; }
@@ -4626,6 +4685,9 @@ export default function PredatorApp({ user }: { user: User }){
         background: #f4f7fb !important;
         border-color: #d3dce7 !important;
       }
+      html[data-theme="light"] .app .sidebar .mobile-more-menu { background: rgba(255,255,255,.99) !important; border-color: #d3dce7 !important; box-shadow: 0 18px 48px rgba(21,34,51,.18) !important; }
+      html[data-theme="light"] .app .sidebar .mobile-more-item { color: #26364a !important; }
+      html[data-theme="light"] .app .sidebar .mobile-more-item.active { color: #981d32 !important; background: #fff0f2 !important; border-color: #f1b8c2 !important; }
       html[data-theme="light"] .app .session-live-box,
       html[data-theme="light"] .app .session-now-box { color: #172437 !important; }
       html[data-theme="light"] .app .session-live-box { background: #ffffff !important; border-color: #d5dee8 !important; }
@@ -4675,7 +4737,7 @@ export default function PredatorApp({ user }: { user: User }){
 
     `}</style>
     {navigationBusy ? <div className="predator-route-indicator" aria-hidden="true" /> : null}
-    <aside className="sidebar"><div onClick={()=>navigateTo("Dashboard")} className="logo-link" role="button" tabIndex={0}><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>navigateTo(name)}><Icon size={18}/><span>{name}</span></button>)}</nav><div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
+    <aside className="sidebar"><div onClick={()=>navigateTo("Dashboard")} className="logo-link" role="button" tabIndex={0}><Logo/></div><nav>{tabs.map(({name,icon:Icon})=><button key={name} className={tab===name?"nav-item active":"nav-item"} onClick={()=>navigateTo(name)}><Icon size={18}/><span>{name}</span></button>)}<button type="button" className={`nav-item mobile-more-trigger ${mobileMoreOpen || !tabs.slice(0,4).some((item)=>item.name===tab) ? "active" : ""}`} aria-expanded={mobileMoreOpen} onClick={()=>setMobileMoreOpen((open)=>!open)}><MoreHorizontal size={18}/><span>More</span></button></nav>{mobileMoreOpen ? <div className="mobile-more-menu" role="menu">{tabs.slice(4).map(({name,icon:Icon})=><button type="button" role="menuitem" key={name} className={`mobile-more-item ${tab===name?"active":""}`} onClick={()=>navigateTo(name)}><Icon size={18}/><span>{name}</span></button>)}</div> : null}<div className="side-bottom"><div className="user-mini">{avatar ? <img src={avatar} alt={displayName} className="mini-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<div><b>{displayName}</b><span>{user.email || "Authenticated user"}</span></div></div></div></aside>
     <main><header className="topbar"><button className="icon-btn" onClick={()=>setCollapsed(v=>!v)}><PanelLeft size={18}/></button><SessionBar/><div className="top-actions"><div className="profile">{avatar ? <img src={avatar} alt={displayName} className="top-avatar-img"/> : <div className="avatar">{displayName.slice(0,1).toUpperCase()}</div>}<span>{displayName}</span></div><ThemeToggle/></div></header><div className={"content predator-content-wrap "+(navigationBusy?"is-transitioning":"")}><div key={tab} className="predator-page-frame">{content}</div></div></main>{selectedSymbol ? <CoinDetails symbol={selectedSymbol} onClose={() => setSelectedSymbol(null)} /> : null}
   </div>
 }
