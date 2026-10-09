@@ -3234,8 +3234,10 @@ function Portfolio({ user }: { user: User }) {
   );
 }
 function CalculatorPage() {
-  const [main, setMain] = useState(100);
-  const [percent, setPercent] = useState(10);
+  // Keep percentage fields as strings while editing so clearing an input does not
+  // force a leading zero back in, and decimal points remain typeable on mobile.
+  const [main, setMain] = useState("100");
+  const [percent, setPercent] = useState("10");
   const [expression, setExpression] = useState("");
   const [display, setDisplay] = useState("0");
   const [from, setFrom] = useState("EUR");
@@ -3431,7 +3433,7 @@ function CalculatorPage() {
   }, [from, to]);
 
   const converted = rate === null ? null : amount * rate;
-  const percentageResult = main * percent / 100;
+  const percentageResult = (Number(main) || 0) * (Number(percent) || 0) / 100;
   const calcKeys = [
     ["AC", "⌫", "%", "÷"],
     ["7", "8", "9", "×"],
@@ -3541,8 +3543,8 @@ function CalculatorPage() {
           <Card>
             <div className="card-head"><h2>Percentage</h2></div>
             <div className="form-grid">
-              <label>Main<input type="number" value={main} onChange={(e: ChangeEvent<HTMLInputElement>) => setMain(Number(e.target.value) || 0)} /></label>
-              <label>%<input type="number" value={percent} onChange={(e: ChangeEvent<HTMLInputElement>) => setPercent(Number(e.target.value) || 0)} /></label>
+              <label>Main<input type="text" inputMode="decimal" value={main} placeholder="Enter value" onChange={(e: ChangeEvent<HTMLInputElement>) => { const value = e.target.value.replace(/,/g, "."); if (/^-?\d*\.?\d*$/.test(value)) setMain(value); }} /></label>
+              <label>%<input type="text" inputMode="decimal" value={percent} placeholder="Enter %" onChange={(e: ChangeEvent<HTMLInputElement>) => { const value = e.target.value.replace(/,/g, "."); if (/^-?\d*\.?\d*$/.test(value)) setPercent(value); }} /></label>
             </div>
             <div className="result mono" style={{ fontSize: "28px", marginTop: "10px" }}>{percentageResult.toFixed(2)}</div>
           </Card>
