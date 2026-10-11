@@ -1349,6 +1349,7 @@ function Signals({
 
   const [rows, setRows] = useState<SignalRow[]>([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [historySearch, setHistorySearch] = useState("");
   const [view, setView] = useState<"active" | "history">("active");
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -1593,6 +1594,12 @@ function Signals({
 
   const nowForHistory = new Date();
   const currentMonthKey = `${nowForHistory.getFullYear()}-${String(nowForHistory.getMonth() + 1).padStart(2, "0")}`;
+  const normalizedHistorySearch = historySearch.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const matchesHistorySearch = (row: HistoryRow) => {
+    if (!normalizedHistorySearch) return true;
+    const normalizedSymbol = String(row.symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return normalizedSymbol.includes(normalizedHistorySearch);
+  };
 
   const groupHistoryBySymbol = (items: HistoryRow[]) =>
     items.reduce<Record<string, HistoryRow[]>>((groups, row) => {
@@ -1602,13 +1609,13 @@ function Signals({
     }, {});
 
   const currentMonthHistory = expiredHistory.filter(
-    (row) => monthKeyFor(row.signal_time) === currentMonthKey,
+    (row) => monthKeyFor(row.signal_time) === currentMonthKey && matchesHistorySearch(row),
   );
 
   const archivedByMonth = expiredHistory.reduce<Record<string, HistoryRow[]>>(
     (groups, row) => {
       const key = monthKeyFor(row.signal_time);
-      if (key !== currentMonthKey) {
+      if (key !== currentMonthKey && matchesHistorySearch(row)) {
         if (!groups[key]) groups[key] = [];
         groups[key].push(row);
       }
@@ -1836,15 +1843,30 @@ function Signals({
                 </h2>
               </div>
 
-              <button
-                className="glass-btn"
-                onClick={loadHistory}
-                disabled={historyLoading}
-                type="button"
-              >
-                <RefreshCw size={14} />
-                Refresh
-              </button>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                <label style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                  <Search size={15} style={{ position: "absolute", left: 12, color: "var(--muted, #9eacbd)", pointerEvents: "none" }} />
+                  <input
+                    type="search"
+                    value={historySearch}
+                    onChange={(event) => setHistorySearch(event.target.value)}
+                    placeholder="Search coin (e.g. BTC)"
+                    aria-label="Search signal history by coin"
+                    autoComplete="off"
+                    spellCheck={false}
+                    style={{ width: 225, maxWidth: "min(44vw, 260px)", minWidth: 130, boxSizing: "border-box", padding: "10px 12px 10px 36px", borderRadius: 10, border: "1px solid rgba(155,178,204,.24)", background: "rgba(255,255,255,.035)", color: "var(--text, #f2f6fb)", outline: "none" }}
+                  />
+                </label>
+                <button
+                  className="glass-btn"
+                  onClick={loadHistory}
+                  disabled={historyLoading}
+                  type="button"
+                >
+                  <RefreshCw size={14} />
+                  Refresh
+                </button>
+              </div>
             </div>
 
             {historyError && (
@@ -1902,7 +1924,7 @@ function Signals({
                         background: "rgba(255,255,255,.015)",
                       }}
                     >
-                      <p className="muted">No expired signals in the current month yet.</p>
+                      <p className="muted">{historySearch.trim() ? `No current-month signals matched "${historySearch.trim()}".` : "No expired signals in the current month yet."}</p>
                     </div>
                   ) : (
                     <div
@@ -1963,7 +1985,7 @@ function Signals({
                         background: "rgba(255,255,255,.015)",
                       }}
                     >
-                      <p className="muted">No previous month report yet.</p>
+                      <p className="muted">{historySearch.trim() ? `No previous-month signals matched "${historySearch.trim()}".` : "No previous month report yet."}</p>
                     </div>
                   ) : (
                     <div style={{ display: "grid", gap: 18 }}>
